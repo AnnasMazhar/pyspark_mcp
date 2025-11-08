@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyspark-tools"
+version = "0.1.0"
+description = "FastMCP server for SQL to PySpark conversion with code review and optimization"
+authors = [{name = "Dev", email = "dev@example.com"}]
+requires-python = ">=3.8"
+dependencies = [
+    "fastmcp>=0.3.0",
+    "sqlglot>=25.0",
+    "pyspark>=3.5.0",
+    "black>=24.0",
+    "pytest>=8.0",
+    "sqlite-utils>=3.36",
+    "openai>=1.0.0",
+    "anthropic>=0.7.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest-cov",
+    "mypy",
+    "ruff"
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+
+[tool.ruff]
+line-length = 88
+target-version = "py38"
