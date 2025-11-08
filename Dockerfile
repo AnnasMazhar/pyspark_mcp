@@ -29,9 +29,11 @@ COPY .flake8 .
 
 # Copy application code (only essential files)
 COPY pyspark_tools/ ./pyspark_tools/
-COPY tests/ ./tests/
 COPY scripts/ ./scripts/
 COPY run_server.py .
+
+# NOTE: Do NOT copy tests into the runtime image for production builds.
+# Tests are heavy and should be run in test images only.
 
 # Create data directories with proper permissions
 RUN mkdir -p /data /output /cache /input && \
@@ -49,16 +51,17 @@ ENV PYSPARK_TOOLS_DB_PATH=/data/memory.sqlite \
     PYTHONPATH=/app \
     PYTHONUNBUFFERED=1
 
-# Basic validation only - move comprehensive testing to runtime
+# Basic validation: recursively check Python syntax (lightweight)
+# Move comprehensive testing to CI/test images.
 RUN echo "🔍 Running basic validation..." && \
-    # Basic syntax check
-    python -m py_compile pyspark_tools/*.py && \
+    # recursively compile python files to check syntax
+    find pyspark_tools -name '*.py' -print0 | xargs -0 -n1 python -m py_compile || (echo "❌ Syntax check failed" && exit 1) && \
     python -m py_compile run_server.py && \
     echo "✅ Basic syntax validation passed"
 
-# Expose port and add health check
+# Expose port and use a small healthcheck script (scripts/healthcheck.py)
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import pyspark_tools.server; print('OK')" || exit 1
+    CMD python /app/scripts/healthcheck.py
 
 CMD ["python", "run_server.py"]

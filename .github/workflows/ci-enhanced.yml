@@ -1,0 +1,410 @@
+name: Enhanced CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: write
+  checks: write
+
+jobs:
+  # 1. Install dependencies and run unit tests
+  install-and-test:
+    name: Install & Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v5
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-${{ matrix.python-version }}-
+          ${{ runner.os }}-pip-
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc g++ git curl
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run unit tests with coverage
+      run: |
+        pytest tests/ -v --tb=short \
+          --cov=pyspark_tools \
+          --cov-report=xml \
+          --cov-report=term-missing \
+          --cov-fail-under=80
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v5
+      if: matrix.python-version == '3.11'
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+  # 2. Code quality and formatting
+  quality-and-format:
+    name: Quality & Auto-format
+    runs-on: ubuntu-latest
+    needs: install-and-test
+    outputs:
+      has_changes: ${{ steps.format_commit.outputs.has_changes }}
+      push_succeeded: ${{ steps.format_commit.outputs.push_succeeded }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v5
+      with:
+        fetch-depth: 0
+        persist-credentials: true
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.11"
+        cache: 'pip'
+
+    - name: Install quality tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install black isort flake8 mypy safety ruff
+
+    - name: Run formatters and prepare commit
+      id: format_commit
+      run: |
+        set -e
+        
+        # Run formatters
+        black . || true
+        isort . || true
+        ruff format . || true
+        
+        # Stage all changes
+        git add -A
+        
+        # If nothing staged, no changes
+        if git diff --staged --quiet; then
+          echo "has_changes=false" >> $GITHUB_OUTPUT
+          echo "push_succeeded=false" >> $GITHUB_OUTPUT
+          echo "No changes from formatters"
+          exit 0
+        fi
+        
+        echo "has_changes=true" >> $GITHUB_OUTPUT
+        
+        # Configure git
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        # Commit changes
+        git commit -m "chore(format): automated formatting from CI" || true
+        
+        # Check if PR is from fork
+        PR_HEAD_REPO="${{ github.event.pull_request.head.repo.full_name }}"
+        REPO_FULL="${{ github.repository }}"
+        
+        if [ "$PR_HEAD_REPO" != "$REPO_FULL" ]; then
+          # Fork: cannot push back with default token; produce diff artifact
+          git --no-pager diff HEAD^..HEAD > changes.diff || true
+          echo "push_succeeded=false" >> $GITHUB_OUTPUT
+          echo "PR is from a fork; created changes.diff"
+          exit 0
+        fi
+        
+        # Try to push formatting commit back to PR branch
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          git push origin HEAD:${{ github.head_ref }} && echo "push_succeeded=true" >> $GITHUB_OUTPUT || echo "push_succeeded=false" >> $GITHUB_OUTPUT
+        else
+          echo "push_succeeded=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Run linting checks
+      run: |
+        # Critical errors only
+        flake8 pyspark_tools/ tests/ run_server.py \
+          --count --select=E9,F63,F7,F82 --show-source --statistics
+        
+        # Full linting (non-blocking)
+        flake8 pyspark_tools/ tests/ run_server.py \
+          --count --exit-zero --max-complexity=10 --max-line-length=88 --statistics
+
+    - name: Type checking
+      run: mypy pyspark_tools/ --ignore-missing-imports
+      continue-on-error: true
+
+    - name: Security check
+      run: |
+        pip install -r requirements.txt
+        safety check --file requirements.txt
+      continue-on-error: true
+
+    - name: Upload changes.diff (if present)
+      if: ${{ steps.format_commit.outputs.has_changes == 'true' && steps.format_commit.outputs.push_succeeded == 'false' }}
+      uses: actions/upload-artifact@v5
+      with:
+        name: changes-diff
+        path: changes.diff
+
+  # 3. Docker build and security tests
+  docker-and-security:
+    name: Docker Build & Security
+    runs-on: ubuntu-latest
+    needs: [install-and-test, quality-and-format]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v5
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build Docker image
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        push: false
+        tags: pyspark-tools:test
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Test Docker image functionality
+      run: |
+        # Test basic imports
+        docker run --rm pyspark-tools:test python -c "
+        import pyspark_tools.server
+        import pyspark_tools.sql_converter
+        import pyspark_tools.memory_manager
+        print('✅ All imports successful')
+        "
+        
+        # Test healthcheck
+        docker run --rm pyspark-tools:test python /app/scripts/healthcheck.py
+        
+        # Test SQL conversion
+        docker run --rm -e PYSPARK_TOOLS_DB_PATH=/tmp/test.db pyspark-tools:test python -c "
+        from pyspark_tools.sql_converter import SQLToPySparkConverter
+        converter = SQLToPySparkConverter()
+        result = converter.convert_sql_to_pyspark('SELECT id, name FROM users')
+        assert result.pyspark_code, 'SQL conversion failed'
+        print('✅ SQL conversion test passed')
+        "
+
+    - name: Run security tests
+      run: |
+        # Set up Python for security tests
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+        # Run security-focused tests
+        pytest tests/ -v -k "security" --tb=short || true
+
+  # 4. Performance and integration tests
+  performance-tests:
+    name: Performance & Integration
+    runs-on: ubuntu-latest
+    needs: [docker-and-security]
+    if: github.event_name == 'push' || github.event.pull_request.draft == false
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v5
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.11"
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run real-world accuracy tests
+      run: |
+        python scripts/test_real_world_scenarios.py
+
+    - name: Run performance benchmarks
+      run: |
+        python scripts/benchmark_performance.py || true
+
+    - name: Upload performance results
+      uses: actions/upload-artifact@v5
+      if: always()
+      with:
+        name: performance-results
+        path: |
+          real_world_test_results.json
+          benchmark_results.json
+
+  # 5. Auto-merge for dependabot and formatting PRs
+  auto-merge:
+    name: Auto-merge Safe PRs
+    runs-on: ubuntu-latest
+    needs: [install-and-test, quality-and-format, docker-and-security]
+    if: always() && github.event_name == 'pull_request'
+    
+    steps:
+    - name: Debug outputs
+      run: |
+        echo "has_changes = ${{ needs.quality-and-format.outputs.has_changes }}"
+        echo "push_succeeded = ${{ needs.quality-and-format.outputs.push_succeeded }}"
+        echo "PR author = ${{ github.event.pull_request.user.login }}"
+
+    - name: Auto-merge dependabot PRs (safe updates only)
+      if: |
+        github.event.pull_request.user.login == 'dependabot[bot]' &&
+        (contains(github.event.pull_request.title, 'ci(deps)') ||
+         contains(github.event.pull_request.title, 'deps(deps): update') ||
+         contains(github.event.pull_request.title, 'deps(deps): bump'))
+      uses: peter-evans/enable-pull-request-automerge@v3
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        pull-request-number: ${{ github.event.pull_request.number }}
+        merge-method: merge
+
+    - name: Merge PR when no formatting changes needed
+      if: |
+        needs.quality-and-format.outputs.has_changes == 'false' &&
+        needs.install-and-test.result == 'success' &&
+        needs.docker-and-security.result == 'success'
+      uses: peter-evans/enable-pull-request-automerge@v3
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        pull-request-number: ${{ github.event.pull_request.number }}
+        merge-method: merge
+
+    - name: Merge PR after formatting changes were pushed
+      if: |
+        needs.quality-and-format.outputs.has_changes == 'true' &&
+        needs.quality-and-format.outputs.push_succeeded == 'true' &&
+        needs.install-and-test.result == 'success' &&
+        needs.docker-and-security.result == 'success'
+      uses: peter-evans/enable-pull-request-automerge@v3
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        pull-request-number: ${{ github.event.pull_request.number }}
+        merge-method: merge
+
+    - name: Notify about manual intervention needed
+      if: |
+        needs.quality-and-format.outputs.has_changes == 'true' &&
+        needs.quality-and-format.outputs.push_succeeded == 'false'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const pr = context.payload.pull_request;
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: pr.number,
+            body: `🤖 **Automated formatting produced changes** but the PR is from a fork, so the workflow could not push them back. 
+            
+            A \`changes.diff\` artifact was uploaded for maintainers to review. 
+            
+            **To allow automatic formatting:**
+            - Enable "Allow edits from maintainers" on this PR, or
+            - Apply the patch manually from the artifact
+            
+            The CI pipeline will auto-merge once formatting is resolved and all tests pass.`
+          });
+
+  # 6. Release (on tags)
+  release:
+    name: Release & Deploy
+    runs-on: ubuntu-latest
+    needs: [install-and-test, quality-and-format, docker-and-security, performance-tests]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v5
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Set up Python for PyPI
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.11"
+
+    - name: Install build dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine
+
+    - name: Build Python package
+      run: python -m build
+
+    - name: Publish to PyPI
+      env:
+        TWINE_USERNAME: __token__
+        TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+      run: twine upload dist/*
+      if: env.TWINE_PASSWORD != ''
