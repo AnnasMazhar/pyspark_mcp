@@ -1,0 +1,134 @@
+version: '3.8'
+
+services:
+  # Main application service
+  pyspark-tools:
+    build: .
+    container_name: pyspark-tools-server
+    ports:
+      - "8000:8000"
+    volumes:
+      - pyspark_data:/data
+      - pyspark_output:/output
+      - ./pyspark_tools:/app/pyspark_tools  # Development mount
+    environment:
+      - PYSPARK_TOOLS_DB_PATH=/data/memory.sqlite
+      - PYSPARK_TOOLS_OUTPUT_DIR=/output
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
+  # Comprehensive test service with coverage
+  pyspark-tools-test:
+    build: .
+    container_name: pyspark-tools-test
+    volumes:
+      - ./tests:/app/tests
+      - ./pyspark_tools:/app/pyspark_tools
+      - ./coverage_reports:/app/coverage_html  # Coverage reports
+    environment:
+      - PYTHONPATH=/app
+      - PYTEST_CURRENT_TEST=1
+    command: pytest tests/ -v --cov=pyspark_tools --cov-report=term-missing --cov-report=html:/app/coverage_html
+    profiles:
+      - test
+
+  # Module-specific testing services
+  test-sql-converter:
+    build: .
+    container_name: test-sql-converter
+    volumes:
+      - ./tests:/app/tests
+      - ./pyspark_tools:/app/pyspark_tools
+    environment:
+      - PYTHONPATH=/app
+    command: pytest tests/test_sql_converter.py tests/test_enhanced_sql_converter.py -v --tb=short
+    profiles:
+      - test
+
+  test-batch-processor:
+    build: .
+    container_name: test-batch-processor
+    volumes:
+      - ./tests:/app/tests
+      - ./pyspark_tools:/app/pyspark_tools
+    environment:
+      - PYTHONPATH=/app
+    command: pytest tests/test_batch_processor.py -v --tb=short
+    profiles:
+      - test
+
+  test-duplicate-detector:
+    build: .
+    container_name: test-duplicate-detector
+    volumes:
+      - ./tests:/app/tests
+      - ./pyspark_tools:/app/pyspark_tools
+    environment:
+      - PYTHONPATH=/app
+    command: pytest tests/test_duplicate_detector.py -v --tb=short
+    profiles:
+      - test
+
+  test-file-utils:
+    build: .
+    container_name: test-file-utils
+    volumes:
+      - ./tests:/app/tests
+      - ./pyspark_tools:/app/pyspark_tools
+    environment:
+      - PYTHONPATH=/app
+    command: pytest tests/test_file_utils.py -v --tb=short
+    profiles:
+      - test
+
+  test-server:
+    build: .
+    container_name: test-server
+    volumes:
+      - ./tests:/app/tests
+      - ./pyspark_tools:/app/pyspark_tools
+    environment:
+      - PYTHONPATH=/app
+    command: pytest tests/test_server.py -v --tb=short
+    profiles:
+      - test
+
+  # Performance testing service
+  test-performance:
+    build: .
+    container_name: test-performance
+    volumes:
+      - ./tests:/app/tests
+      - ./pyspark_tools:/app/pyspark_tools
+      - pyspark_test_data:/data
+    environment:
+      - PYTHONPATH=/app
+      - PYSPARK_TOOLS_DB_PATH=/data/test_memory.sqlite
+    command: pytest tests/ -v -k "performance" --tb=short
+    profiles:
+      - test
+      - performance
+
+  # Integration testing service
+  test-integration:
+    build: .
+    container_name: test-integration
+    volumes:
+      - ./tests:/app/tests
+      - ./pyspark_tools:/app/pyspark_tools
+      - pyspark_test_data:/data
+    environment:
+      - PYTHONPATH=/app
+      - PYSPARK_TOOLS_DB_PATH=/data/integration_test.sqlite
+    command: pytest tests/ -v -k "integration" --tb=short
+    profiles:
+      - test
+      - integration
+
+volumes:
+  pyspark_data:
+    driver: local
+  pyspark_output:
+    driver: local
+  pyspark_test_data:
+    driver: local

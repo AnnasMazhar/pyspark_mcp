@@ -30,15 +30,21 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.conda/
+conda-meta/
 
-# IDE
+# IDE and Editors
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+.vim/
+.emacs.d/
+.atom/
+.sublime-*
 
-# OS
+# OS Generated Files
 .DS_Store
 .DS_Store?
 ._*
@@ -46,17 +52,155 @@ venv.bak/
 .Trashes
 ehthumbs.db
 Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
 
-# Logs
+# Logs and Debug Files
 *.log
 logs/
+debug/
+*.debug
+*.trace
 
-# MCP specific
+# MCP and Database Files
 .mcp/
 *.sqlite
+*.sqlite3
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
 
-# Temporary files
+# Cache and Temporary Files
 tmp/
 temp/
 .tmp/
+cache/
+.cache/
+*.tmp
+*.temp
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Testing and Development Files (keep for local testing)
+test_*.py
+*_test.py
+test_query.sql
+converted_pyspark.py
+test_docker_environment.py
+test_mcp_server_comprehensive.py
+
+# Security Sensitive Files
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cer
+*.csr
+secrets/
+.secrets/
+credentials/
+.credentials/
+config.ini
+.env.*
+!.env.example
+
+# Output and Generated Files
+output/
+generated/
+converted/
+results/
+reports/
+*.out
+*.output
+
+# Root level test files and directories (keep for testing)
+/output/
+/converted_pyspark.py
+/test_*.py
+/test_query.sql
+/test_docker_environment.py
+/test_mcp_server_comprehensive.py
+
+# Data Files (potentially sensitive)
+data/
+datasets/
+*.csv
+*.json
+*.xml
+*.parquet
+*.avro
+*.orc
+
+# Backup Files
+*.bak
+*.backup
+*.old
+*~
+.backup/
+backups/
+
+# System and Process Files
+.pid
+*.pid
+.lock
+*.lock
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+.docker/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Documentation Build
+docs/_build/
+site/
+.mkdocs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+test-results/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Profiling
+*.prof
+*.pstats
+
+# Large Files (Git LFS should be used instead)
+*.zip
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+*.pdf
+*.doc
+*.docx
+*.xls
+*.xlsx
+*.ppt
+*.pptx
+
+# Node.js (if any JS tooling is added)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Spark specific
+spark-warehouse/
+derby.log
+metastore_db/
+*.spark

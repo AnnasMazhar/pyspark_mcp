@@ -1,138 +1,122 @@
-# 🚀 PySpark Tools - FastMCP Server
+# PySpark Tools - FastMCP Server
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![FastMCP](https://img.shields.io/badge/FastMCP-compatible-green.svg)](https://github.com/jlowin/fastmcp)
+A FastMCP server for intelligent SQL to PySpark conversion with batch processing, code review, and AWS Glue optimization.
 
-A powerful FastMCP server that provides intelligent SQL to PySpark conversion, code review, and optimization capabilities with AWS Glue best practices. Built for seamless integration with AI assistants and workflow automation tools.
+## Features
 
-## ✨ Key Features
+- **SQL to PySpark Conversion** - Convert SQL queries to optimized PySpark code
+- **Batch Processing** - Process multiple SQL files and PDFs concurrently  
+- **Code Review** - Analyze PySpark code for best practices and AWS Glue compatibility
+- **PDF Extraction** - Extract SQL queries from PDF documents
+- **Memory Management** - Persistent storage for conversions and optimization history
 
-- 🔄 **SQL to PySpark Conversion**: Intelligent conversion of complex SQL queries to optimized PySpark code
-- 🔍 **Code Review**: Comprehensive analysis for best practices, performance, and AWS Glue compatibility  
-- 🧠 **Memory Management**: Persistent storage and retrieval of conversion history and context
-- ☁️ **AWS Glue Integration**: Generate production-ready Glue job templates with best practices
-- ⚡ **Performance Optimization**: Advanced suggestions for query performance and resource efficiency
-- 🔗 **MCP Integration**: Seamless integration with AI assistants via Model Context Protocol
-- 📊 **Analytics**: Track conversion patterns and code quality metrics
+## Project Structure
 
-## Installation
+```
+pyspark_tools/
+├── pyspark_tools/          # Core package
+│   ├── server.py          # FastMCP server
+│   ├── sql_converter.py   # SQL to PySpark conversion
+│   ├── batch_processor.py # Batch processing
+│   ├── code_reviewer.py   # Code review and optimization
+│   ├── memory_manager.py  # Data persistence
+│   └── file_utils.py      # File handling utilities
+├── tests/                 # Test suite
+├── docs/                  # Detailed documentation
+├── docker-compose.yml     # Container orchestration
+└── requirements.txt       # Dependencies
+```
+
+## Quick Start
+
+### Docker (Recommended)
+
+```bash
+# Start the server
+docker-compose up -d
+
+# Run tests
+make test-all
+
+# View logs
+docker-compose logs -f pyspark-tools
+```
+
+### Local Installation
 
 ```bash
 # Install dependencies
 pip install -r requirements.txt
 
-# Or install in development mode
-pip install -e .
+# Run the server
+python run_server.py
 ```
+
+## MCP Tools
+
+The server provides 39 MCP tools for SQL conversion, batch processing, and code optimization:
+
+- **convert_sql_to_pyspark** - Convert SQL to PySpark code
+- **batch_process_files** - Process multiple files concurrently
+- **review_pyspark_code** - Code review and best practices
+- **generate_aws_glue_job_template** - AWS Glue job generation
+- **extract_sql_from_pdf** - PDF SQL extraction
+
+See [docs/api.md](docs/api.md) for complete tool reference.
 
 ## Usage
 
-### Running the Server
-
 ```bash
-# Run with uvx (recommended)
+# MCP integration
 uvx fastmcp serve pyspark_tools.server:app
 
-# Or run directly
-python -m pyspark_tools.server
-```
-
-### Available Tools
-
-1. **convert_sql_to_pyspark**: Convert SQL queries to PySpark code
-2. **review_pyspark_code**: Review PySpark code for issues and best practices
-3. **optimize_pyspark_code**: Get optimization suggestions for PySpark code
-4. **get_conversion_history**: Retrieve recent conversion history
-5. **search_conversions**: Search through stored conversions
-6. **store_context/get_context**: Store and retrieve context information
-7. **generate_aws_glue_job_template**: Generate AWS Glue job templates
-
-## Configuration
-
-The server uses SQLite for memory management. The default database location is:
-`/home/dev/.cache/mcp/memory.sqlite`
-
-## Examples
-
-### Convert SQL to PySpark
-
-```python
-# Input SQL
-sql = "SELECT customer_id, SUM(amount) FROM orders WHERE status = 'completed' GROUP BY customer_id"
-
-# Converted PySpark code will include:
-# - Proper imports
-# - DataFrame operations
-# - Optimization suggestions
-```
-
-### Review PySpark Code
-
-```python
-# The reviewer checks for:
-# - AWS Glue compatibility
-# - Performance issues
-# - Best practices
-# - Code style
-```
-
-### AWS Glue Best Practices
-
-The server includes checks for:
-- Glue-specific imports and context usage
-- Job bookmarking
-- Parameter handling
-- Supported operations
-- File format recommendations
-
-## 🛠️ Development
-
-```bash
-# Clone the repository
-git clone https://github.com/AnnasMazhar/pyspark_mcp.git
-cd pyspark_mcp
-
-# Install development dependencies
-pip install -e ".[dev]"
+# Batch processing
+make batch-process DIR=/path/to/sql/files
 
 # Run tests
-pytest
-
-# Format code
-black pyspark_tools/
-
-# Type checking
-mypy pyspark_tools/
+make test-all
 ```
 
-## 🤝 Contributing
+## Testing
 
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
+```bash
+# Run all tests
+make test-all
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+# Run specific module tests
+make test-sql-converter
+make test-batch-processor
 
-## 📝 License
+# Run with coverage
+make coverage-html
+```
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+See [docs/testing.md](docs/testing.md) for detailed testing guide.
 
-## 🙏 Acknowledgments
+## Development
 
-- Built with [FastMCP](https://github.com/jlowin/fastmcp) for Model Context Protocol integration
-- Powered by [PySpark](https://spark.apache.org/docs/latest/api/python/) for distributed data processing
-- Optimized for [AWS Glue](https://aws.amazon.com/glue/) serverless data integration
+```bash
+# Install dependencies
+pip install -r requirements.txt
 
-## 📞 Support
+# Format and lint
+make format
+make lint
 
-If you have any questions or need help, please:
-- Open an issue on GitHub
-- Check the [documentation](README.md)
-- Review existing issues and discussions
+# Run tests
+make test-all
+```
 
----
+See [docs/development.md](docs/development.md) for detailed development guide.
 
-**Made with ❤️ for the PySpark and data engineering community**
+## Documentation
+
+- [Installation Guide](docs/installation.md)
+- [Usage Guide](docs/usage.md) 
+- [API Reference](docs/api.md)
+- [Testing Guide](docs/testing.md)
+- [Development Guide](docs/development.md)
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
