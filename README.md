@@ -90,8 +90,8 @@ The server includes checks for:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/pyspark-mcp-server.git
-cd pyspark-mcp-server
+git clone https://github.com/AnnasMazhar/pyspark_mcp.git
+cd pyspark_mcp
 
 # Install development dependencies
 pip install -e ".[dev]"
