@@ -45,6 +45,14 @@ from pyspark_tools.memory_manager import (
 from pyspark_tools.sql_converter import SQLToPySparkConverter
 
 
+@pytest.fixture
+def temp_dir() -> Generator[Path, None, None]:
+    """Create a temporary directory for test data."""
+    temp_path = Path(tempfile.mkdtemp())
+    yield temp_path
+    shutil.rmtree(temp_path, ignore_errors=True)
+
+
 @pytest.fixture(scope="session")
 def test_data_dir() -> Path:
     """Create a temporary directory for test data."""
