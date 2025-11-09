@@ -17,6 +17,11 @@ dependencies = [
     "pdfplumber>=0.10.0"
 ]
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pyspark_tools*"]
+exclude = ["tests*", "output*", "test_venv*", "test_queries*", "coverage_reports*"]
+
 [project.optional-dependencies]
 dev = [
     "black>=24.0",
