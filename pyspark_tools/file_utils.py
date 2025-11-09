@@ -90,11 +90,13 @@ class SQLQueryExtractor:
         "ANALYZE",
     }
 
-    # Common SQL patterns
+    # Common SQL patterns - improved to handle comment-separated queries
     SQL_PATTERNS = [
-        # Standard SQL queries
-        r"(?i)\b(SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|WITH|MERGE|TRUNCATE)\b.*?(?=;|\n\s*(?:SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|WITH|MERGE|TRUNCATE|\Z))",
-        # Queries that might not end with semicolon
+        # Standard SQL queries ending with semicolon
+        r"(?i)\b(SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|WITH|MERGE|TRUNCATE)\b.*?;",
+        # Queries separated by comment blocks (multiple dashes or comment lines)
+        r"(?i)\b(SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|WITH|MERGE|TRUNCATE)\b.*?(?=\n\s*-{3,}|\n\s*--|\n\s*\n\s*(?:SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|WITH|MERGE|TRUNCATE)|\Z)",
+        # Queries that might not end with semicolon but are followed by blank lines
         r"(?i)\b(SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|WITH|MERGE|TRUNCATE)\b[^;]*?(?=\n\s*\n|\Z)",
     ]
 
@@ -108,30 +110,89 @@ class SQLQueryExtractor:
         """Extract SQL queries from plain text."""
         queries = []
 
-        # Clean up the text
-        text = self._clean_text(text)
+        # First try to split by common separators (comments, blank lines) BEFORE cleaning
+        queries_from_splitting = self._split_queries_by_separators(text, source_file)
+        if len(queries_from_splitting) > 1:
+            # If splitting found multiple queries, use those
+            queries.extend(queries_from_splitting)
+        else:
+            # Clean up the text for regex patterns
+            cleaned_text = self._clean_text(text)
 
-        # Try each pattern
-        for pattern in self.compiled_patterns:
-            matches = pattern.finditer(text)
-            for match in matches:
-                query = match.group().strip()
-                if self._is_valid_sql_query(query):
-                    # Calculate line number
-                    line_number = text[: match.start()].count("\n") + 1
+            # Fallback to regex patterns for single query or when splitting fails
+            for pattern in self.compiled_patterns:
+                matches = pattern.finditer(cleaned_text)
+                for match in matches:
+                    query = match.group().strip()
+                    if self._is_valid_sql_query(query):
+                        # Calculate line number
+                        line_number = cleaned_text[: match.start()].count("\n") + 1
 
-                    queries.append(
-                        ExtractedSQL(
-                            query=query,
-                            source_file=source_file,
-                            line_number=line_number,
-                            confidence=self._calculate_confidence(query),
+                        queries.append(
+                            ExtractedSQL(
+                                query=query,
+                                source_file=source_file,
+                                line_number=line_number,
+                                confidence=self._calculate_confidence(query),
+                            )
                         )
-                    )
 
         # Remove duplicates and sort by confidence
         queries = self._deduplicate_queries(queries)
         return sorted(queries, key=lambda x: x.confidence, reverse=True)
+
+    def _split_queries_by_separators(
+        self, text: str, source_file: str = ""
+    ) -> List[ExtractedSQL]:
+        """Split queries by comment separators and blank lines."""
+        queries = []
+
+        # Try multiple splitting strategies
+        strategies = [
+            # Split by lines with multiple dashes (---, ----, etc.)
+            r"\n\s*-{3,}[^\n]*\n",
+            # Split by comment lines starting with --
+            r"\n\s*--[^\n]*\n",
+            # Split by multiple blank lines
+            r"\n\s*\n\s*\n",
+        ]
+
+        best_parts = [text]  # Default to whole text
+
+        # Try each strategy and use the one that gives the most parts
+        for pattern in strategies:
+            parts = re.split(pattern, text, flags=re.MULTILINE)
+            if len(parts) > len(best_parts):
+                best_parts = parts
+
+        current_line = 1
+        for part in best_parts:
+            part = part.strip()
+            if not part:
+                continue
+
+            # Check if this part contains a SQL query
+            if self._contains_sql_keywords(part) and self._is_valid_sql_query(part):
+                # Clean the individual query
+                cleaned_query = self._clean_text(part)
+                queries.append(
+                    ExtractedSQL(
+                        query=cleaned_query,
+                        source_file=source_file,
+                        line_number=current_line,
+                        confidence=self._calculate_confidence(cleaned_query),
+                    )
+                )
+
+            # Update line number (approximate)
+            current_line += part.count("\n") + 2  # Add buffer for separators
+
+        return queries
+
+    def _contains_sql_keywords(self, text: str) -> bool:
+        """Check if text contains SQL keywords."""
+        text_upper = text.upper()
+        return any(keyword in text_upper for keyword in self.SQL_KEYWORDS)
 
     def _clean_text(self, text: str) -> str:
         """Clean text for better SQL extraction."""

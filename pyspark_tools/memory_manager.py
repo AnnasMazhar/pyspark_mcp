@@ -63,8 +63,10 @@ class MemoryManager:
 
     def __init__(self, db_path: Optional[str] = None):
         if db_path is None:
-            db_path = os.getenv('PYSPARK_TOOLS_DB_PATH', 
-                               os.path.expanduser('~/.cache/mcp/memory.sqlite'))
+            db_path = os.getenv(
+                "PYSPARK_TOOLS_DB_PATH",
+                os.path.expanduser("~/.cache/mcp/memory.sqlite"),
+            )
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()

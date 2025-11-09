@@ -493,9 +493,11 @@ class BatchProcessor:
 
         try:
             # Convert SQL to PySpark
-            pyspark_code, optimizations = self.sql_converter.convert_sql_to_pyspark(
+            conversion_result = self.sql_converter.convert_sql_to_pyspark(
                 extracted_sql.query
             )
+            pyspark_code = conversion_result.pyspark_code
+            optimizations = conversion_result.optimizations
 
             # Generate output filename
             output_filename = self.output_manager.generate_output_filename(

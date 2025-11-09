@@ -72,6 +72,10 @@ test-advanced-optimizer: ## Run advanced optimizer module tests (FAST)
 	@echo "🔬 Testing advanced optimizer module..."
 	docker-compose --profile test run --rm pyspark-tools-test pytest tests/test_advanced_optimizer.py -v --tb=short
 
+test-data-source-analyzer: ## Run data source analyzer module tests (FAST)
+	@echo "🔬 Testing data source analyzer module..."
+	docker-compose --profile test run --rm pyspark-tools-test pytest tests/test_data_source_analyzer.py -v --tb=short
+
 # Specialized testing
 test-performance: build ## Run performance tests
 	@echo "⚡ Running performance tests..."

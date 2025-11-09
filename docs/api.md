@@ -2,6 +2,36 @@
 
 ## MCP Tool Endpoints
 
+### 🚀 Flagship Workflow Tool
+
+#### `complete_sql_conversion` ⭐ **FLAGSHIP TOOL**
+One-stop complete SQL to PySpark conversion with optimization and Glue job generation.
+
+**Parameters:**
+- `sql_content` (str): Raw SQL content (no file references needed)
+- `optimization_level` (str): "basic", "standard", "aggressive" (default: "standard")
+- `include_glue_template` (bool): Whether to generate Glue job template (default: false)
+- `client_context` (dict, optional): Optional context (schema, tables, etc.)
+
+**Returns:**
+- `status`: "success" or "error"
+- `pyspark_code`: Optimized PySpark code with applied optimizations
+- `performance_gain`: Estimated performance improvement percentage
+- `aws_glue_compatible`: Boolean indicating AWS Glue compatibility
+- `glue_job_template`: Complete Glue job template (if requested)
+- `context_detected`: Auto-detected context (dialect, multi-tenant, complexity)
+- `deployment_ready`: Boolean indicating production readiness
+
+**Example:**
+```python
+result = complete_sql_conversion(
+    sql_content="SELECT customer_id, SUM(amount) FROM orders GROUP BY customer_id",
+    optimization_level="aggressive",
+    include_glue_template=True
+)
+# Returns complete conversion package ready for deployment
+```
+
 ### Core Conversion Tools
 
 #### `convert_sql_to_pyspark`
@@ -116,6 +146,66 @@ Get analytics on optimization effectiveness and usage patterns.
 **Returns:**
 - `metrics`: Historical optimization metrics
 - `effectiveness`: Optimization effectiveness statistics
+
+### Workflow Integration Tools
+
+#### `process_editor_selection`
+Process selected SQL text from IDE editor (VS Code, Kiro, etc.) for real-time conversion.
+
+**Parameters:**
+- `selected_text` (str): SQL text selected in the editor
+- `file_path` (str, optional): Optional file path for context
+- `cursor_line` (int, optional): Optional cursor line for context
+
+**Returns:**
+- `status`: "success", "error", or "warning"
+- `action`: IDE action to perform ("replace_selection", "show_notification", etc.)
+- `pyspark_code`: Generated PySpark code (if successful)
+- `performance_gain`: Estimated performance improvement
+- `quick_actions`: List of available quick actions for the IDE
+
+#### `realtime_sql_assistance`
+Provide real-time assistance as developers type SQL in IDEs.
+
+**Parameters:**
+- `current_sql` (str): Current SQL content being typed
+- `cursor_position` (int, optional): Current cursor position
+
+**Returns:**
+- `status`: "ready", "active", or "error"
+- `syntax_valid`: Boolean indicating if syntax is valid
+- `auto_completions`: List of auto-completion suggestions
+- `performance_warnings`: List of performance warnings
+- `multi_tenant_hints`: Multi-tenant optimization hints
+
+#### `workspace_analysis`
+Analyze entire workspace for SQL optimization opportunities.
+
+**Parameters:**
+- `workspace_files` (list): List of files with path and content
+- `analysis_scope` (str): Scope of analysis ("sql_optimization", "performance", "multi_tenant")
+
+**Returns:**
+- `status`: "success" or "info"
+- `total_sql_files`: Number of SQL files found
+- `file_analyses`: Analysis results for each file
+- `recommendations`: Workspace-wide recommendations
+- `summary`: Summary statistics and improvement estimates
+
+#### `generate_project_structure`
+Generate complete production-ready project structure from SQL queries.
+
+**Parameters:**
+- `project_name` (str): Name of the project to generate
+- `sql_contents` (list): List of SQL content strings
+- `target_platform` (str): Target platform ("aws_glue", "databricks", "spark")
+- `include_tests` (bool): Whether to include test files
+
+**Returns:**
+- `status`: "success" or "error"
+- `project_files`: Dictionary of generated files with content
+- `total_files`: Number of files generated
+- `summary`: Project generation summary with metrics
 
 ## Data Structures
 

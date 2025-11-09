@@ -11,6 +11,7 @@ services:
       - pyspark_data:/data
       - pyspark_output:/output
       - ./pyspark_tools:/app/pyspark_tools  # Development mount
+      - ./test_queries:/app/test_queries    # Test queries mount
     environment:
       - PYSPARK_TOOLS_DB_PATH=/data/memory.sqlite
       - PYSPARK_TOOLS_OUTPUT_DIR=/output

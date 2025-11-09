@@ -1,8 +1,33 @@
 #!/usr/bin/env python3
-"""Startup script for the PySpark Tools MCP server."""
+"""
+Entry point for the PySpark Tools MCP Server.
+
+This script starts the FastMCP server for SQL to PySpark conversion
+with all 49 tools available for use.
+"""
+
+import sys
+import os
+
+# Add the pyspark_tools package to the Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'pyspark_tools'))
 
 from pyspark_tools.server import app
 
+def main():
+    """Start the MCP server."""
+    print("🚀 Starting PySpark Tools MCP Server...")
+    print("📊 49 tools available for SQL to PySpark conversion")
+    print("🔧 Server ready for connections")
+    
+    try:
+        # Run the FastMCP server
+        app.run()
+    except KeyboardInterrupt:
+        print("\n👋 Server stopped by user")
+    except Exception as e:
+        print(f"❌ Server error: {e}")
+        sys.exit(1)
+
 if __name__ == "__main__":
-    # Run the server using stdio transport (synchronous)
-    app.run(transport="stdio")
+    main()

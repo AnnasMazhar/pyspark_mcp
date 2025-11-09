@@ -5,6 +5,8 @@ pyspark>=3.5.0,<4.0.0
 sqlite-utils>=3.36
 pypdf>=6.1.3
 pdfplumber>=0.10.0
+boto3>=1.34.0
+botocore>=1.34.0
 
 # Development dependencies
 black>=24.3.0
