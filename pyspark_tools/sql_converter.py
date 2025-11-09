@@ -110,6 +110,22 @@ class SQLToPySparkConverter:
             # Parse SQL using detected/specified dialect
             parsed = sqlglot.parse_one(sql, dialect=dialect)
 
+            # Check if fallback is required for unsupported features
+            if self._requires_fallback(sql, parsed):
+                fallback_code, fallback_guidance = self._enhanced_fallback_conversion(
+                    sql, dialect
+                )
+                warnings.extend(fallback_guidance)
+
+                return ConversionResult(
+                    pyspark_code=fallback_code,
+                    optimizations=[],
+                    warnings=warnings,
+                    dialect_used=dialect,
+                    complex_constructs=["Recursive CTE (unsupported)"],
+                    fallback_used=True,
+                )
+
             # Analyze complex constructs
             complex_constructs = self._analyze_complex_constructs(parsed)
 
@@ -248,6 +264,25 @@ class SQLToPySparkConverter:
             self.logger.warning(f"Error analyzing complex constructs: {str(e)}")
 
         return constructs
+
+    def _requires_fallback(self, sql: str, parsed_sql) -> bool:
+        """Check if SQL requires fallback conversion due to unsupported features."""
+        sql_lower = sql.lower()
+
+        # Check for recursive CTEs (not supported in PySpark)
+        if "with recursive" in sql_lower:
+            return True
+
+        # Check for other unsupported features
+        unsupported_patterns = [
+            "pivot",
+            "unpivot",
+            "merge",
+            "connect by",
+            "start with",
+        ]
+
+        return any(pattern in sql_lower for pattern in unsupported_patterns)
 
     def _generate_enhanced_pyspark_code(
         self, parsed_sql, table_info: Optional[Dict] = None, dialect: str = "spark"
@@ -441,11 +476,49 @@ class SQLToPySparkConverter:
 
             # Handle aliases
             if hasattr(expr, "alias") and expr.alias:
-                base_expr = self._convert_function_calls(str(expr.this), dialect)
+                base_expr = self._convert_expression_to_pyspark(expr.this, dialect)
                 return f"({base_expr}).alias('{expr.alias}')"
 
+            # Handle SQLGlot expression types directly
+            expr_type = type(expr).__name__
+
+            # Handle Redshift date functions
+            if expr_type == "TsOrDsAdd" and dialect == "redshift":
+                # Convert TS_OR_DS_ADD to date_add
+                date_col = self._convert_expression_to_pyspark(expr.this, dialect)
+                days = str(expr.expression) if hasattr(expr, "expression") else "1"
+                return f"date_add({date_col}, {days})"
+
+            elif expr_type == "TsOrDsDiff" and dialect == "redshift":
+                # Convert TS_OR_DS_DIFF to datediff
+                end_date = self._convert_expression_to_pyspark(expr.this, dialect)
+                start_date = (
+                    self._convert_expression_to_pyspark(expr.expression, dialect)
+                    if hasattr(expr, "expression")
+                    else "col('date')"
+                )
+                return f"datediff({end_date}, {start_date})"
+
+            # Handle Coalesce function
+            elif expr_type == "Coalesce":
+                args = [
+                    self._convert_expression_to_pyspark(arg, dialect)
+                    for arg in expr.expressions
+                ]
+                return f"coalesce({', '.join(args)})"
+
+            # Handle Anonymous functions (like ISNULL)
+            elif expr_type == "Anonymous":
+                func_name = str(expr.this).lower()
+                if dialect == "redshift" and func_name == "isnull":
+                    args = [
+                        self._convert_expression_to_pyspark(arg, dialect)
+                        for arg in expr.expressions
+                    ]
+                    return f"coalesce({', '.join(args)})"
+
             # Handle function calls
-            if hasattr(expr, "this") and hasattr(expr, "expressions"):
+            elif hasattr(expr, "this") and hasattr(expr, "expressions"):
                 # This is likely a function call
                 func_name = str(expr.this).lower()
                 if (
@@ -456,8 +529,19 @@ class SQLToPySparkConverter:
                         func_name, expr.expressions, dialect
                     )
 
+            # Handle column references
+            elif expr_type == "Column":
+                return f"col('{expr.this}')"
+
+            # Handle literals
+            elif expr_type == "Literal":
+                if expr.is_string:
+                    return f"lit('{expr.this}')"
+                else:
+                    return f"lit({expr.this})"
+
             # Handle simple column references
-            if hasattr(expr, "this") and not hasattr(expr, "expressions"):
+            elif hasattr(expr, "this") and not hasattr(expr, "expressions"):
                 return f"col('{expr.this}')"
 
             # Fallback to string conversion with function mapping
@@ -784,9 +868,13 @@ class SQLToPySparkConverter:
         # Check for PostgreSQL-specific functions
         sql_str = str(parsed_sql).lower()
 
-        if "string_agg" in sql_str or "array_agg" in sql_str:
+        if (
+            "string_agg" in sql_str
+            or "array_agg" in sql_str
+            or "group_concat" in sql_str
+        ):
             optimizations.append(
-                "PostgreSQL aggregation functions converted - consider using collect_list with appropriate partitioning"
+                "PostgreSQL aggregation functions converted to collect_list - consider using appropriate partitioning"
             )
 
         if "extract(" in sql_str:

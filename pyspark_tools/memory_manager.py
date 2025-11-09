@@ -4,10 +4,19 @@ import hashlib
 import json
 import os
 import sqlite3
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+# Import resource management for connection tracking
+try:
+    from .resource_manager import get_resource_manager
+
+    RESOURCE_MANAGEMENT_AVAILABLE = True
+except ImportError:
+    RESOURCE_MANAGEMENT_AVAILABLE = False
 
 
 @dataclass
@@ -69,13 +78,33 @@ class MemoryManager:
             )
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        # Thread-local storage for connections to avoid cross-thread issues
+        self._local = threading.local()
         self._init_db()
         # Ensure database is migrated to latest schema
         self.migrate_database()
 
+    def _create_connection(self, description: str = "") -> sqlite3.Connection:
+        """Create a database connection with resource tracking if available."""
+        conn = sqlite3.connect(self.db_path)
+
+        # Register with resource manager if available
+        if RESOURCE_MANAGEMENT_AVAILABLE:
+            try:
+                resource_manager = get_resource_manager()
+                resource_manager.register_connection(
+                    conn, description or f"MemoryManager connection to {self.db_path}"
+                )
+            except Exception:
+                # If resource management fails, continue without it
+                pass
+
+        return conn
+
     def _init_db(self):
         """Initialize the database schema."""
-        with sqlite3.connect(self.db_path) as conn:
+        conn = self._create_connection("Database initialization")
+        try:
             # Original tables
             conn.execute(
                 """
@@ -158,7 +187,10 @@ class MemoryManager:
             """
             )
 
-            # Original indexes
+            # Check if we need to migrate the schema after tables are created
+            self._migrate_schema(conn)
+
+            # Original indexes (create after migration to ensure columns exist)
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_sql_hash ON conversions(sql_hash)
@@ -202,10 +234,48 @@ class MemoryManager:
             """
             )
 
+            # Check if we need to migrate the schema after tables are created
+            self._migrate_schema(conn)
+
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _migrate_schema(self, conn):
+        """Migrate database schema to latest version."""
+        # Check if sql_hash column exists in conversions table
+        cursor = conn.execute("PRAGMA table_info(conversions)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        if "sql_hash" not in columns:
+            # Add missing sql_hash column
+            conn.execute("ALTER TABLE conversions ADD COLUMN sql_hash TEXT")
+            # Create unique index
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_sql_hash_unique ON conversions(sql_hash)"
+            )
+
+        # Check if other required columns exist and add them if missing
+        required_columns = {
+            "optimization_notes": "TEXT",
+            "review_notes": "TEXT",
+            "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        }
+
+        for column, column_type in required_columns.items():
+            if column not in columns:
+                conn.execute(
+                    f"ALTER TABLE conversions ADD COLUMN {column} {column_type}"
+                )
+
+        conn.commit()
+
     def migrate_database(self) -> bool:
         """Migrate existing database to new schema version."""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            conn = self._create_connection("Database migration")
+            self._migrate_schema(conn)
+            try:
                 # Check if migration is needed by looking for new tables
                 cursor = conn.execute(
                     """
@@ -300,7 +370,10 @@ class MemoryManager:
                         "CREATE INDEX idx_doc_expires ON documentation_cache(expires_at)"
                     )
 
+                conn.commit()
                 return True
+            finally:
+                conn.close()
         except Exception as e:
             print(f"Database migration failed: {e}")
             return False
@@ -320,7 +393,8 @@ class MemoryManager:
         """Store a SQL to PySpark conversion."""
         sql_hash = self._hash_sql(sql_query)
 
-        with sqlite3.connect(self.db_path) as conn:
+        conn = self._create_connection("Store conversion")
+        try:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO conversions 
@@ -336,6 +410,9 @@ class MemoryManager:
                     dialect,
                 ),
             )
+            conn.commit()
+        finally:
+            conn.close()
 
         return sql_hash
 
@@ -911,3 +988,16 @@ class MemoryManager:
                 "expired_entries": total_entries - active_entries,
                 "entries_by_type": entries_by_type,
             }
+
+    def close(self):
+        """Close any open database connections and cleanup resources."""
+        # If resource management is available, let it handle cleanup
+        if RESOURCE_MANAGEMENT_AVAILABLE:
+            try:
+                resource_manager = get_resource_manager()
+                resource_manager.cleanup_all()
+            except Exception:
+                pass
+
+        # Note: Individual connections are closed in their respective methods
+        # using 'with' statements or explicit close() calls

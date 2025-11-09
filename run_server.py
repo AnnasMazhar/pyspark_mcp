@@ -10,16 +10,17 @@ import sys
 import os
 
 # Add the pyspark_tools package to the Python path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'pyspark_tools'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "pyspark_tools"))
 
 from pyspark_tools.server import app
+
 
 def main():
     """Start the MCP server."""
     print("🚀 Starting PySpark Tools MCP Server...")
     print("📊 49 tools available for SQL to PySpark conversion")
     print("🔧 Server ready for connections")
-    
+
     try:
         # Run the FastMCP server
         app.run()
@@ -28,6 +29,7 @@ def main():
     except Exception as e:
         print(f"❌ Server error: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

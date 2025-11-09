@@ -347,6 +347,7 @@ logger.info(f"Starting job: {args['JOB_NAME']}")"""
             return f"""    # Apply SQL transformations
     source_df.createOrReplaceTempView("source_table")
     transformed_df = spark.sql('''
+    {transformation_sql}
     ''')"""
         else:
             return """    # Apply transformations here
@@ -1546,8 +1547,8 @@ job.init(args['JOB_NAME'], args)
 try:
     # Read source data
     source_dynamic_frame = glueContext.create_dynamic_frame.from_catalog(
-        database=args['SOURCE_DATABASE'],
-        table_name=args['SOURCE_TABLE'],
+        database=args.get('SOURCE_DATABASE', '{source_table.database_name}'),
+        table_name=args.get('SOURCE_TABLE', '{source_table.table_name}'),
         transformation_ctx="source_dynamic_frame"
     )
     
@@ -1584,8 +1585,8 @@ try:
     # Write consolidated data
     glueContext.write_dynamic_frame.from_catalog(
         frame=optimized_dynamic_frame,
-        database=args['TARGET_DATABASE'],
-        table_name=args['TARGET_TABLE'],
+        database=args.get('TARGET_DATABASE', '{target_table.database_name}'),
+        table_name=args.get('TARGET_TABLE', '{target_table.table_name}'),
         transformation_ctx="write_optimized"
     )
     
@@ -2132,7 +2133,7 @@ try:
         database=args['SOURCE_DATABASE'],
         table_name=args['SOURCE_TABLE'],
         transformation_ctx="source_dynamic_frame",
-        push_down_predicate=f"{{args['CDC_COLUMN']}} > '{{last_processed}}'"
+        push_down_predicate=f"{{args.get('CDC_COLUMN', '{cdc_column}')}} > '{{last_processed}}'"
     )
     
     # Convert to DataFrame
@@ -2144,7 +2145,7 @@ try:
     
     if new_records_count > 0:
         # Get current max timestamp for next run
-        max_timestamp = source_df.agg(max(col(args['CDC_COLUMN']))).collect()[0][0]
+        max_timestamp = source_df.agg(max(col(args.get('CDC_COLUMN', '{cdc_column}')))).collect()[0][0]
         
         # Apply CDC strategy
         if "{cdc_strategy}" == "upsert":
@@ -2283,10 +2284,10 @@ try:
     source_df = source_dynamic_frame.toDF()
     
     # Apply transformations
-    if transformation_sql:
+    if {transformation_sql is not None}:
         # Apply SQL transformations
         source_df.createOrReplaceTempView("source_table")
-        transformed_df = spark.sql(transformation_sql)
+        transformed_df = spark.sql('''{transformation_sql or "SELECT * FROM source_table"}''')
     else:
         # Apply default transformations
         transformed_df = source_df.withColumn("processed_timestamp", current_timestamp())
@@ -2543,7 +2544,7 @@ finally:
         """Generate best practices for incremental processing."""
         common_practices = [
             "Always test incremental logic with historical data",
-            "Monitor data freshness and processing latency",
+            "monitor data freshness and processing latency",
             "Implement data quality checks on incremental data",
             "Set up alerting for job failures and data delays",
             "Document the incremental processing logic and dependencies",

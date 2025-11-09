@@ -31,6 +31,7 @@ COPY .flake8 .
 COPY pyspark_tools/ ./pyspark_tools/
 COPY scripts/ ./scripts/
 COPY run_server.py .
+COPY test.py .
 
 # NOTE: Do NOT copy tests into the runtime image for production builds.
 # Tests are heavy and should be run in test images only.

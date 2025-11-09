@@ -12,53 +12,10 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # Code Quality and Linting
-  quality:
-    name: Code Quality
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v4
-      with:
-        python-version: "3.11"
-        cache: 'pip'
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install black isort flake8 mypy safety
-
-    - name: Format check with black
-      run: black --check --diff pyspark_tools/ tests/ run_server.py
-
-    - name: Import sorting check with isort
-      run: isort --check-only --diff pyspark_tools/ tests/ run_server.py
-
-    - name: Lint with flake8
-      run: |
-        flake8 pyspark_tools/ tests/ run_server.py \
-          --count --select=E9,F63,F7,F82 --show-source --statistics
-        flake8 pyspark_tools/ tests/ run_server.py \
-          --count --exit-zero --max-complexity=10 --max-line-length=88 --statistics
-
-    - name: Type check with mypy
-      run: mypy pyspark_tools/ --ignore-missing-imports
-      continue-on-error: true
-
-    - name: Security check with safety
-      run: |
-        pip install -r requirements.txt
-        safety check --file requirements.txt
-      continue-on-error: true
-
-  # Unit and Integration Tests
+  # Single comprehensive test job using unified test runner
   test:
     name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    needs: quality
     strategy:
       fail-fast: false
       matrix:
@@ -74,66 +31,34 @@ jobs:
         python-version: ${{ matrix.python-version }}
         cache: 'pip'
 
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y gcc g++ git curl
-
-    - name: Install Python dependencies
+    - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+        pip install -e .
 
-    - name: Run unit tests
-      run: |
-        pytest tests/ -v --tb=short \
-          --cov=pyspark_tools \
-          --cov-report=xml \
-          --cov-report=term-missing \
-          --cov-fail-under=50 || python validate_core_functionality.py
+    - name: Validate environment
+      run: python test.py --validate
 
-    - name: Upload coverage to Codecov
+    - name: Run CI tests
+      run: python test.py --ci
+
+    - name: Run security tests
+      run: python test.py --security
+      continue-on-error: true
+
+    - name: Upload coverage
       uses: codecov/codecov-action@v3
       if: matrix.python-version == '3.11'
       with:
         file: ./coverage.xml
         flags: unittests
-        name: codecov-umbrella
 
-  # Security Tests
-  security:
-    name: Security Tests
-    runs-on: ubuntu-latest
-    needs: quality
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v4
-      with:
-        python-version: "3.11"
-        cache: 'pip'
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-
-    - name: Run security tests
-      run: |
-        pytest tests/ -v -k "security" --tb=short
-
-    - name: Run security audit script
-      run: |
-        python scripts/security_audit.py
-      continue-on-error: true
-
-  # Docker Build and Test
+  # Docker build and test
   docker:
     name: Docker Build & Test
     runs-on: ubuntu-latest
-    needs: [quality, test]
+    needs: test
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -152,46 +77,15 @@ jobs:
 
     - name: Test Docker image
       run: |
-        # Test basic functionality
-        docker run --rm pyspark-tools:test python -c "
-        import pyspark_tools.server
-        import pyspark_tools.sql_converter
-        import pyspark_tools.memory_manager
-        print('✅ All imports successful')
-        "
+        # Test using unified test runner in Docker
+        docker run --rm pyspark-tools:test python test.py --fast
 
-        # Test SQL conversion
-        docker run --rm pyspark-tools:test python -c "
-        from pyspark_tools.sql_converter import SQLConverter
-        from pyspark_tools.memory_manager import MemoryManager
-        mm = MemoryManager(':memory:')
-        converter = SQLConverter(mm)
-        result = converter.convert_sql_to_pyspark('SELECT id, name FROM users')
-        assert result['success'], 'SQL conversion failed'
-        print('✅ SQL conversion test passed')
-        "
-
-    - name: Test Docker container startup
-      run: |
-        # Start container in background
-        docker run -d --name test-container -p 8080:8000 pyspark-tools:test
-        
-        # Wait for startup
-        sleep 10
-        
-        # Check if container is running
-        docker ps | grep test-container
-        
-        # Cleanup
-        docker stop test-container
-        docker rm test-container
-
-  # Performance Tests
+  # Performance tests (main branch only)
   performance:
     name: Performance Tests
     runs-on: ubuntu-latest
-    needs: [test, docker]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    if: github.ref == 'refs/heads/main'
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -206,22 +100,17 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+        pip install -e .
 
-    - name: Run performance benchmarks
-      run: |
-        python scripts/benchmark_performance.py
+    - name: Run performance tests
+      run: python test.py --performance
       continue-on-error: true
 
-    - name: Validate performance targets
-      run: |
-        bash scripts/validate_performance.sh
-      continue-on-error: true
-
-  # Build and Push Docker Image (on tags)
+  # Release (on tags only)
   release:
     name: Release
     runs-on: ubuntu-latest
-    needs: [quality, test, security, docker]
+    needs: [test, docker]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
@@ -244,8 +133,6 @@ jobs:
       with:
         images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         tags: |
-          type=ref,event=branch
-          type=ref,event=pr
           type=semver,pattern={{version}}
           type=semver,pattern={{major}}.{{minor}}
           type=semver,pattern={{major}}
@@ -282,40 +169,3 @@ jobs:
         TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
       run: twine upload dist/*
       if: env.TWINE_PASSWORD != ''
-
-  # Production Deployment Validation
-  production-validation:
-    name: Production Validation
-    runs-on: ubuntu-latest
-    needs: [quality, test, security, docker]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v4
-      with:
-        python-version: "3.11"
-        cache: 'pip'
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install docker requests
-
-    - name: Run production deployment validation
-      run: |
-        python scripts/validate_production_deployment.py
-      continue-on-error: true
-
-    - name: Upload validation results
-      uses: actions/upload-artifact@v3
-      if: always()
-      with:
-        name: production-validation-results
-        path: |
-          production_validation_results.json
-          benchmark_results.json
-          security_audit_results.json

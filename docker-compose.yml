@@ -10,121 +10,90 @@ services:
     volumes:
       - pyspark_data:/data
       - pyspark_output:/output
-      - ./pyspark_tools:/app/pyspark_tools  # Development mount
-      - ./test_queries:/app/test_queries    # Test queries mount
     environment:
       - PYSPARK_TOOLS_DB_PATH=/data/memory.sqlite
       - PYSPARK_TOOLS_OUTPUT_DIR=/output
       - PYTHONUNBUFFERED=1
     restart: unless-stopped
 
-  # Comprehensive test service with coverage
+  # Unified test service using single entry point
   pyspark-tools-test:
     build: .
     container_name: pyspark-tools-test
     volumes:
       - ./tests:/app/tests
       - ./pyspark_tools:/app/pyspark_tools
-      - ./coverage_reports:/app/coverage_html  # Coverage reports
+      - ./test.py:/app/test.py
+      - ./coverage_reports:/app/coverage_reports
+      - pyspark_test_data:/data
     environment:
       - PYTHONPATH=/app
-      - PYTEST_CURRENT_TEST=1
-    command: pytest tests/ -v --cov=pyspark_tools --cov-report=term-missing --cov-report=html:/app/coverage_html
+      - PYSPARK_TOOLS_DB_PATH=/data/test.sqlite
+    command: python test.py --ci
     profiles:
       - test
 
-  # Module-specific testing services
-  test-sql-converter:
+  # Fast tests for development
+  test-fast:
     build: .
-    container_name: test-sql-converter
+    container_name: test-fast
     volumes:
       - ./tests:/app/tests
       - ./pyspark_tools:/app/pyspark_tools
+      - ./test.py:/app/test.py
     environment:
       - PYTHONPATH=/app
-    command: pytest tests/test_sql_converter.py tests/test_enhanced_sql_converter.py -v --tb=short
+    command: python test.py --fast
     profiles:
       - test
 
-  test-batch-processor:
-    build: .
-    container_name: test-batch-processor
-    volumes:
-      - ./tests:/app/tests
-      - ./pyspark_tools:/app/pyspark_tools
-    environment:
-      - PYTHONPATH=/app
-    command: pytest tests/test_batch_processor.py -v --tb=short
-    profiles:
-      - test
-
-  test-duplicate-detector:
-    build: .
-    container_name: test-duplicate-detector
-    volumes:
-      - ./tests:/app/tests
-      - ./pyspark_tools:/app/pyspark_tools
-    environment:
-      - PYTHONPATH=/app
-    command: pytest tests/test_duplicate_detector.py -v --tb=short
-    profiles:
-      - test
-
-  test-file-utils:
-    build: .
-    container_name: test-file-utils
-    volumes:
-      - ./tests:/app/tests
-      - ./pyspark_tools:/app/pyspark_tools
-    environment:
-      - PYTHONPATH=/app
-    command: pytest tests/test_file_utils.py -v --tb=short
-    profiles:
-      - test
-
-  test-server:
-    build: .
-    container_name: test-server
-    volumes:
-      - ./tests:/app/tests
-      - ./pyspark_tools:/app/pyspark_tools
-    environment:
-      - PYTHONPATH=/app
-    command: pytest tests/test_server.py -v --tb=short
-    profiles:
-      - test
-
-  # Performance testing service
+  # Performance tests
   test-performance:
     build: .
     container_name: test-performance
     volumes:
       - ./tests:/app/tests
       - ./pyspark_tools:/app/pyspark_tools
+      - ./test.py:/app/test.py
       - pyspark_test_data:/data
     environment:
       - PYTHONPATH=/app
-      - PYSPARK_TOOLS_DB_PATH=/data/test_memory.sqlite
-    command: pytest tests/ -v -k "performance" --tb=short
+      - PYSPARK_TOOLS_DB_PATH=/data/perf_test.sqlite
+    command: python test.py --performance
     profiles:
       - test
       - performance
 
-  # Integration testing service
-  test-integration:
+  # Security tests
+  test-security:
     build: .
-    container_name: test-integration
+    container_name: test-security
     volumes:
       - ./tests:/app/tests
       - ./pyspark_tools:/app/pyspark_tools
-      - pyspark_test_data:/data
+      - ./test.py:/app/test.py
     environment:
       - PYTHONPATH=/app
-      - PYSPARK_TOOLS_DB_PATH=/data/integration_test.sqlite
-    command: pytest tests/ -v -k "integration" --tb=short
+    command: python test.py --security
     profiles:
       - test
-      - integration
+      - security
+
+  # Coverage tests
+  test-coverage:
+    build: .
+    container_name: test-coverage
+    volumes:
+      - ./tests:/app/tests
+      - ./pyspark_tools:/app/pyspark_tools
+      - ./test.py:/app/test.py
+      - ./coverage_reports:/app/coverage_reports
+    environment:
+      - PYTHONPATH=/app
+    command: python test.py --coverage
+    profiles:
+      - test
+      - coverage
 
 volumes:
   pyspark_data:

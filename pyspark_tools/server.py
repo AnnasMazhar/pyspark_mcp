@@ -112,24 +112,24 @@ def complete_sql_conversion(
     sql_content: str,
     optimization_level: str = "standard",
     include_glue_template: bool = False,
-    client_context: Optional[Dict] = None
+    client_context: Optional[Dict] = None,
 ) -> Dict[str, Any]:
     """
     One-stop tool for complete SQL to PySpark conversion with optimization.
-    
+
     Automatically:
     1. Converts SQL to PySpark
     2. Applies optimizations
     3. Reviews for best practices
     4. Generates Glue job template (optional)
     5. Provides deployment guidance
-    
+
     Args:
         sql_content: Raw SQL content (no file references needed)
         optimization_level: "basic", "standard", "aggressive"
         include_glue_template: Whether to generate Glue job template
         client_context: Optional context (schema, tables, etc.)
-    
+
     Returns:
         Complete conversion package ready for use
     """
@@ -138,78 +138,84 @@ def complete_sql_conversion(
             return {
                 "status": "error",
                 "message": "No SQL content provided",
-                "suggestions": ["Provide SQL content to convert"]
+                "suggestions": ["Provide SQL content to convert"],
             }
-        
+
         # 1. Auto-analyze SQL context
         context_result = analyze_sql_context(sql_content)
         if context_result["status"] != "success":
             return context_result
-        
+
         context = context_result
-        
+
         # Build table info from context
         table_info = {}
         if client_context:
             table_info.update(client_context)
-        
+
         # Add detected schemas and tables
         for schema in context.get("schemas", []):
             for table in context.get("tables", []):
                 full_table_name = f"{schema}.{table}" if schema else table
                 if full_table_name not in table_info:
                     table_info[full_table_name] = {"size_gb": 1.0}  # Default estimate
-        
+
         # 2. Convert with intelligent settings
         conversion_result = convert_sql_to_pyspark(
             sql_query=sql_content,
             table_info=table_info,
             dialect=context.get("dialect", "postgres"),
-            store_result=True
+            store_result=True,
         )
-        
+
         if conversion_result["status"] != "success":
             return conversion_result
-        
+
         # 3. Auto-optimize based on detected patterns
         optimization_result = optimize_pyspark_code(
             code=conversion_result["pyspark_code"],
-            optimization_level=optimization_level
+            optimization_level=optimization_level,
         )
-        
+
         # 4. Review for best practices
         review_result = review_pyspark_code(
-            code=optimization_result.get("optimized_code", conversion_result["pyspark_code"]),
-            focus_areas=["aws_glue", "performance", "best_practice"]
+            code=optimization_result.get(
+                "optimized_code", conversion_result["pyspark_code"]
+            ),
+            focus_areas=["aws_glue", "performance", "best_practice"],
         )
-        
+
         # 5. Generate Glue template if requested
         glue_template = None
         if include_glue_template:
             job_name = f"converted_{hash(sql_content) % 10000:04d}"
             if context.get("client_ids"):
                 job_name = f"client_{context['client_ids'][0]}_{job_name}"
-            
+
             glue_result = generate_aws_glue_job_template(
                 job_name=job_name,
                 source_format="parquet",
                 target_format="delta",
-                use_dynamic_frame=True
+                use_dynamic_frame=True,
             )
             glue_template = glue_result.get("template")
-        
+
         # Calculate performance improvement estimate
         optimizations_count = len(optimization_result.get("suggestions", []))
         performance_gain = f"{min(15 + optimizations_count * 5, 50)}-{min(25 + optimizations_count * 8, 70)}%"
-        
+
         return {
             "status": "success",
-            "pyspark_code": optimization_result.get("optimized_code", conversion_result["pyspark_code"]),
+            "pyspark_code": optimization_result.get(
+                "optimized_code", conversion_result["pyspark_code"]
+            ),
             "performance_gain": performance_gain,
-            "aws_glue_compatible": review_result.get("summary", {}).get("aws_glue_ready", True),
+            "aws_glue_compatible": review_result.get("summary", {}).get(
+                "aws_glue_ready", True
+            ),
             "suggestions": review_result.get("summary", {}).get("total_issues", 0),
             "top_suggestions": [
-                issue.get("suggestion", "No specific suggestion") 
+                issue.get("suggestion", "No specific suggestion")
                 for issue in review_result.get("issues", [])[:3]
             ],
             "glue_job_template": glue_template,
@@ -218,11 +224,11 @@ def complete_sql_conversion(
                 "dialect": context.get("dialect"),
                 "multi_tenant": context.get("multi_tenant_pattern", False),
                 "complexity_score": context.get("complexity_score", 0),
-                "client_ids": context.get("client_ids", [])
+                "client_ids": context.get("client_ids", []),
             },
-            "deployment_ready": True
+            "deployment_ready": True,
         }
-        
+
     except Exception as e:
         return {
             "status": "error",
@@ -230,8 +236,8 @@ def complete_sql_conversion(
             "suggestions": [
                 "Check SQL syntax",
                 "Try simpler query first",
-                "Ensure SQL content is valid"
-            ]
+                "Ensure SQL content is valid",
+            ],
         }
 
 
@@ -239,41 +245,38 @@ def complete_sql_conversion(
 def analyze_sql_context(sql_content: str) -> Dict[str, Any]:
     """
     Automatically analyze SQL to extract context information.
-    
+
     Extracts:
     - Database schemas and table names
     - Client ID from multi-tenant patterns
     - Complexity assessment
     - Optimization opportunities
     - Required dependencies
-    
+
     No hardcoded references - works with any SQL content.
     """
     try:
         if not sql_content.strip():
-            return {
-                "status": "error",
-                "message": "No SQL content provided"
-            }
-        
+            return {"status": "error", "message": "No SQL content provided"}
+
         import re
-        
+
         # Detect SQL dialect
         dialect = _detect_sql_dialect(sql_content)
-        
+
         # Extract schemas and tables dynamically
         schemas = _extract_schemas_from_sql(sql_content)
         tables = _extract_tables_from_sql(sql_content)
-        
+
         # Detect multi-tenant patterns
         client_ids = _extract_client_ids_from_sql(sql_content)
-        
+
         # Calculate complexity
         complexity = _calculate_sql_complexity(sql_content)
-        
+
         # Identify optimization opportunities
         opportunities = _identify_optimization_opportunities(sql_content)
-        
+
         return {
             "status": "success",
             "dialect": dialect,
@@ -283,31 +286,30 @@ def analyze_sql_context(sql_content: str) -> Dict[str, Any]:
             "complexity_score": complexity,
             "multi_tenant_pattern": len(client_ids) > 0,
             "optimization_opportunities": opportunities,
-            "estimated_conversion_time": "2-5 seconds" if complexity < 5 else "5-15 seconds"
+            "estimated_conversion_time": (
+                "2-5 seconds" if complexity < 5 else "5-15 seconds"
+            ),
         }
-        
+
     except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Context analysis failed: {str(e)}"
-        }
+        return {"status": "error", "message": f"Context analysis failed: {str(e)}"}
 
 
 @app.tool()
 def process_editor_selection(
     selected_text: str,
     file_path: Optional[str] = None,
-    cursor_line: Optional[int] = None
+    cursor_line: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Process selected SQL text from IDE editor (VS Code, Kiro, etc.)
     Perfect for IDE extension integration with real-time feedback.
-    
+
     Args:
         selected_text: SQL text selected in the editor
         file_path: Optional file path for context
         cursor_line: Optional cursor line for context
-    
+
     Returns:
         IDE-friendly response with actions and suggestions
     """
@@ -316,26 +318,26 @@ def process_editor_selection(
             "status": "error",
             "message": "No SQL content selected",
             "action": "show_notification",
-            "suggestions": ["Select SQL code to convert to PySpark"]
+            "suggestions": ["Select SQL code to convert to PySpark"],
         }
-    
+
     # Quick SQL validation
     if not _is_sql_content(selected_text):
         return {
             "status": "warning",
             "message": "Selected text may not be SQL",
             "action": "show_warning",
-            "suggestions": ["Ensure you have selected valid SQL code"]
+            "suggestions": ["Ensure you have selected valid SQL code"],
         }
-    
+
     try:
         # Fast conversion for IDE responsiveness
         result = complete_sql_conversion(
             sql_content=selected_text,
             optimization_level="standard",
-            include_glue_template=False  # Keep it fast for IDE
+            include_glue_template=False,  # Keep it fast for IDE
         )
-        
+
         if result["status"] == "success":
             return {
                 "status": "success",
@@ -347,35 +349,34 @@ def process_editor_selection(
                 "quick_actions": [
                     {"label": "Generate Glue Job", "command": "generate_glue_template"},
                     {"label": "Optimize Further", "command": "aggressive_optimization"},
-                    {"label": "Add Tests", "command": "generate_tests"}
+                    {"label": "Add Tests", "command": "generate_tests"},
                 ],
-                "context": result["context_detected"]
+                "context": result["context_detected"],
             }
         else:
             return result
-            
+
     except Exception as e:
         return {
             "status": "error",
             "message": f"Conversion failed: {str(e)}",
             "action": "show_error",
-            "suggestions": ["Check SQL syntax", "Try simpler query first"]
+            "suggestions": ["Check SQL syntax", "Try simpler query first"],
         }
 
 
 @app.tool()
 def realtime_sql_assistance(
-    current_sql: str,
-    cursor_position: Optional[int] = None
+    current_sql: str, cursor_position: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Provide real-time assistance as developers type SQL.
     Perfect for live coding assistance in IDEs.
-    
+
     Args:
         current_sql: Current SQL content being typed
         cursor_position: Current cursor position
-    
+
     Returns:
         Real-time suggestions, warnings, and completions
     """
@@ -384,25 +385,34 @@ def realtime_sql_assistance(
             "status": "ready",
             "suggestions": [],
             "warnings": [],
-            "completions": ["SELECT", "WITH", "INSERT", "UPDATE", "DELETE", "FROM", "WHERE", "JOIN"]
+            "completions": [
+                "SELECT",
+                "WITH",
+                "INSERT",
+                "UPDATE",
+                "DELETE",
+                "FROM",
+                "WHERE",
+                "JOIN",
+            ],
         }
-    
+
     try:
         # Quick syntax validation
         syntax_issues = _validate_sql_syntax(current_sql)
-        
+
         # Detect patterns as user types
         detected_patterns = _detect_realtime_patterns(current_sql)
-        
+
         # Performance warnings
         performance_warnings = _check_performance_patterns(current_sql)
-        
+
         # Multi-tenant hints
         multi_tenant_hints = _check_multi_tenant_patterns(current_sql)
-        
+
         # Auto-completion suggestions
         completions = _generate_auto_completions(current_sql, cursor_position)
-        
+
         return {
             "status": "active",
             "syntax_valid": len(syntax_issues) == 0,
@@ -411,29 +421,26 @@ def realtime_sql_assistance(
             "performance_warnings": performance_warnings,
             "multi_tenant_hints": multi_tenant_hints,
             "auto_completions": completions,
-            "suggestions": _generate_contextual_suggestions(current_sql)
+            "suggestions": _generate_contextual_suggestions(current_sql),
         }
-        
+
     except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e)
-        }
+        return {"status": "error", "message": str(e)}
 
 
 @app.tool()
 def workspace_analysis(
     workspace_files: List[Dict[str, str]],  # [{"path": "...", "content": "..."}]
-    analysis_scope: str = "sql_optimization"
+    analysis_scope: str = "sql_optimization",
 ) -> Dict[str, Any]:
     """
     Analyze entire workspace for SQL optimization opportunities.
     Perfect for Kiro integration and workspace-wide analysis.
-    
+
     Args:
         workspace_files: List of files with path and content
         analysis_scope: Scope of analysis ("sql_optimization", "performance", "multi_tenant")
-    
+
     Returns:
         Comprehensive workspace analysis with recommendations
     """
@@ -443,61 +450,68 @@ def workspace_analysis(
         for file_info in workspace_files:
             if _is_sql_content(file_info["content"]):
                 sql_files.append(file_info)
-        
+
         if not sql_files:
             return {
                 "status": "info",
                 "message": "No SQL files found in workspace",
-                "recommendations": ["Add SQL files to analyze optimization opportunities"]
+                "recommendations": [
+                    "Add SQL files to analyze optimization opportunities"
+                ],
             }
-        
+
         # Analyze each file
         file_analyses = []
         total_opportunities = 0
         multi_tenant_files = 0
         high_complexity_files = 0
-        
+
         for file_info in sql_files:
             try:
                 context_result = analyze_sql_context(file_info["content"])
-                
+
                 if context_result["status"] == "success":
                     context = context_result
                     opportunities = len(context["optimization_opportunities"])
                     total_opportunities += opportunities
-                    
+
                     if context["multi_tenant_pattern"]:
                         multi_tenant_files += 1
-                    
+
                     if context["complexity_score"] > 7:
                         high_complexity_files += 1
-                    
-                    file_analyses.append({
-                        "path": file_info["path"],
-                        "optimization_opportunities": opportunities,
-                        "complexity_score": context["complexity_score"],
-                        "multi_tenant": context["multi_tenant_pattern"],
-                        "dialect": context["dialect"],
-                        "client_ids": context["client_ids"]
-                    })
-                
+
+                    file_analyses.append(
+                        {
+                            "path": file_info["path"],
+                            "optimization_opportunities": opportunities,
+                            "complexity_score": context["complexity_score"],
+                            "multi_tenant": context["multi_tenant_pattern"],
+                            "dialect": context["dialect"],
+                            "client_ids": context["client_ids"],
+                        }
+                    )
+
             except Exception as e:
-                file_analyses.append({
-                    "path": file_info["path"],
-                    "error": str(e)
-                })
-        
+                file_analyses.append({"path": file_info["path"], "error": str(e)})
+
         # Generate workspace recommendations
         recommendations = []
         if multi_tenant_files > 0:
-            recommendations.append(f"Consider batch processing for {multi_tenant_files} multi-tenant files")
-        
+            recommendations.append(
+                f"Consider batch processing for {multi_tenant_files} multi-tenant files"
+            )
+
         if high_complexity_files > 0:
-            recommendations.append(f"Focus optimization efforts on {high_complexity_files} high-complexity files")
-        
+            recommendations.append(
+                f"Focus optimization efforts on {high_complexity_files} high-complexity files"
+            )
+
         if total_opportunities > 10:
-            recommendations.append("Significant optimization opportunities detected - consider automated conversion")
-        
+            recommendations.append(
+                "Significant optimization opportunities detected - consider automated conversion"
+            )
+
         return {
             "status": "success",
             "total_sql_files": len(sql_files),
@@ -508,22 +522,19 @@ def workspace_analysis(
                 "total_optimization_opportunities": total_opportunities,
                 "multi_tenant_files": multi_tenant_files,
                 "high_complexity_files": high_complexity_files,
-                "estimated_workspace_improvement": f"{min(total_opportunities * 5, 50)}%"
-            }
+                "estimated_workspace_improvement": f"{min(total_opportunities * 5, 50)}%",
+            },
         }
-        
+
     except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e)
-        }
+        return {"status": "error", "message": str(e)}
 
 
 # Helper functions for the new tools
 def _detect_sql_dialect(sql_content: str) -> str:
     """Detect SQL dialect from content patterns"""
     sql_lower = sql_content.lower()
-    
+
     if "::" in sql_content and ("interval" in sql_lower or "now()" in sql_lower):
         return "postgres"
     elif "dual" in sql_lower or "sysdate" in sql_lower:
@@ -537,6 +548,7 @@ def _detect_sql_dialect(sql_content: str) -> str:
 def _extract_schemas_from_sql(sql_content: str) -> List[str]:
     """Extract schema names dynamically"""
     import re
+
     schema_pattern = re.compile(r"(\w+_db_\w+_\d+_\w+|\w+\.\w+)")
     matches = schema_pattern.findall(sql_content)
     schemas = set()
@@ -552,6 +564,7 @@ def _extract_schemas_from_sql(sql_content: str) -> List[str]:
 def _extract_tables_from_sql(sql_content: str) -> List[str]:
     """Extract table names from SQL"""
     import re
+
     # Simple table extraction - can be enhanced
     table_pattern = re.compile(r"(?:FROM|JOIN)\s+(?:\w+\.)?(\w+)", re.IGNORECASE)
     tables = table_pattern.findall(sql_content)
@@ -561,6 +574,7 @@ def _extract_tables_from_sql(sql_content: str) -> List[str]:
 def _extract_client_ids_from_sql(sql_content: str) -> List[str]:
     """Extract client IDs from multi-tenant patterns"""
     import re
+
     # Generic pattern for multi-tenant schema detection
     client_pattern = re.compile(r"(\w+_db_\w+_(\d+)_\w+)")
     matches = client_pattern.findall(sql_content)
@@ -571,27 +585,27 @@ def _calculate_sql_complexity(sql_content: str) -> int:
     """Calculate SQL complexity score"""
     score = 0
     sql_lower = sql_content.lower()
-    
+
     # Base score for SELECT
     if "select" in sql_lower:
         score += 1
-    
+
     # JOINs add complexity
     join_count = len(re.findall(r"join", sql_lower))
     score += join_count * 2
-    
+
     # Subqueries add complexity
     subquery_count = len(re.findall(r"\(.*select.*\)", sql_lower, re.DOTALL))
     score += subquery_count * 3
-    
+
     # CASE statements add complexity
     case_count = len(re.findall(r"case\s+when", sql_lower))
     score += case_count * 2
-    
+
     # Window functions add complexity
     window_count = len(re.findall(r"over\s*\(", sql_lower))
     score += window_count * 2
-    
+
     return score
 
 
@@ -599,26 +613,35 @@ def _identify_optimization_opportunities(sql_content: str) -> List[str]:
     """Identify optimization opportunities in SQL"""
     opportunities = []
     sql_lower = sql_content.lower()
-    
+
     if "select *" in sql_lower:
         opportunities.append("Replace SELECT * with specific columns")
-    
+
     if sql_lower.count("join") > 3:
         opportunities.append("Consider join optimization strategies")
-    
+
     if "where" not in sql_lower and "select" in sql_lower:
         opportunities.append("Add WHERE clause for data filtering")
-    
+
     # Check for multi-tenant patterns generically
     if re.search(r"\w+_db_\w+_\d+_\w+", sql_content):
         opportunities.append("Multi-tenant optimization available")
-    
+
     return opportunities
 
 
 def _is_sql_content(content: str) -> bool:
     """Check if content appears to be SQL"""
-    sql_keywords = ["select", "from", "where", "join", "insert", "update", "delete", "with"]
+    sql_keywords = [
+        "select",
+        "from",
+        "where",
+        "join",
+        "insert",
+        "update",
+        "delete",
+        "with",
+    ]
     content_lower = content.lower()
     return any(keyword in content_lower for keyword in sql_keywords)
 
@@ -626,14 +649,14 @@ def _is_sql_content(content: str) -> bool:
 def _validate_sql_syntax(sql_content: str) -> List[str]:
     """Basic SQL syntax validation"""
     issues = []
-    
+
     # Check for basic syntax issues
     if sql_content.count("(") != sql_content.count(")"):
         issues.append("Mismatched parentheses")
-    
+
     if sql_content.count("'") % 2 != 0:
         issues.append("Unclosed string literal")
-    
+
     return issues
 
 
@@ -641,17 +664,17 @@ def _detect_realtime_patterns(sql_content: str) -> List[str]:
     """Detect patterns as user types"""
     patterns = []
     sql_lower = sql_content.lower()
-    
+
     if "select" in sql_lower and "from" in sql_lower:
         patterns.append("Basic SELECT query detected")
-    
+
     if "join" in sql_lower:
         patterns.append("JOIN operation detected")
-    
+
     # Check for multi-tenant patterns generically
     if re.search(r"\w+_db_\w+_\d+_\w+", sql_content):
         patterns.append("Multi-tenant pattern detected")
-    
+
     return patterns
 
 
@@ -659,49 +682,55 @@ def _check_performance_patterns(sql_content: str) -> List[str]:
     """Check for performance anti-patterns"""
     warnings = []
     sql_lower = sql_content.lower()
-    
+
     if "select *" in sql_lower:
         warnings.append("Consider selecting specific columns instead of SELECT *")
-    
+
     if sql_lower.count("join") > 5:
         warnings.append("Many joins detected - consider optimization strategies")
-    
+
     if "where" not in sql_lower and "select" in sql_lower:
         warnings.append("Consider adding WHERE clause to filter data")
-    
+
     return warnings
 
 
 def _check_multi_tenant_patterns(sql_content: str) -> List[str]:
     """Check for multi-tenant optimization opportunities"""
     hints = []
-    
+
     # Check for multi-tenant patterns generically
     if re.search(r"\w+_db_\w+_\d+_\w+", sql_content):
-        hints.append("Multi-tenant pattern detected - consider client-aware partitioning")
-    
+        hints.append(
+            "Multi-tenant pattern detected - consider client-aware partitioning"
+        )
+
     client_ids = _extract_client_ids_from_sql(sql_content)
     if len(client_ids) > 1:
-        hints.append("Multiple clients detected - consider batch processing optimization")
-    
+        hints.append(
+            "Multiple clients detected - consider batch processing optimization"
+        )
+
     return hints
 
 
-def _generate_auto_completions(sql_content: str, cursor_position: Optional[int]) -> List[str]:
+def _generate_auto_completions(
+    sql_content: str, cursor_position: Optional[int]
+) -> List[str]:
     """Generate auto-completion suggestions"""
     completions = []
-    
+
     if not sql_content.strip():
         return ["SELECT", "WITH", "INSERT", "UPDATE", "DELETE"]
-    
+
     sql_lower = sql_content.lower()
-    
+
     if "select" in sql_lower and "from" not in sql_lower:
         completions.extend(["FROM", "* FROM"])
-    
+
     if "from" in sql_lower and "where" not in sql_lower:
         completions.extend(["WHERE", "JOIN", "LEFT JOIN", "INNER JOIN"])
-    
+
     return completions
 
 
@@ -709,17 +738,19 @@ def _generate_contextual_suggestions(sql_content: str) -> List[str]:
     """Generate contextual suggestions based on SQL content"""
     suggestions = []
     sql_lower = sql_content.lower()
-    
+
     if "select *" in sql_lower:
         suggestions.append("Consider selecting specific columns for better performance")
-    
+
     # Check for multi-tenant patterns generically
     if re.search(r"\w+_db_\w+_\d+_\w+", sql_content):
-        suggestions.append("Multi-tenant query detected - optimization opportunities available")
-    
+        suggestions.append(
+            "Multi-tenant query detected - optimization opportunities available"
+        )
+
     if sql_lower.count("join") > 3:
         suggestions.append("Complex joins detected - consider performance optimization")
-    
+
     return suggestions
 
 
@@ -728,18 +759,18 @@ def generate_project_structure(
     project_name: str,
     sql_contents: List[str],  # List of SQL content (not file paths!)
     target_platform: str = "aws_glue",
-    include_tests: bool = True
+    include_tests: bool = True,
 ) -> Dict[str, Any]:
     """
     Generate complete PySpark project structure from SQL content.
     Perfect for creating production-ready projects from any SQL.
-    
+
     Args:
         project_name: Name of the project to generate
         sql_contents: List of SQL content strings
         target_platform: Target platform ("aws_glue", "databricks", "spark")
         include_tests: Whether to include test files
-    
+
     Returns:
         Complete project structure with all files
     """
@@ -748,11 +779,11 @@ def generate_project_structure(
             return {
                 "status": "error",
                 "message": "No SQL content provided",
-                "suggestions": ["Provide at least one SQL query to generate project"]
+                "suggestions": ["Provide at least one SQL query to generate project"],
             }
-        
+
         project_files = {}
-        
+
         # Process each SQL content
         conversions = []
         for i, sql_content in enumerate(sql_contents):
@@ -761,46 +792,48 @@ def generate_project_structure(
                 conversion = complete_sql_conversion(
                     sql_content=sql_content,
                     optimization_level="aggressive",
-                    include_glue_template=(target_platform == "aws_glue")
+                    include_glue_template=(target_platform == "aws_glue"),
                 )
-                
+
                 if conversion["status"] == "success":
-                    conversions.append({
-                        "index": i,
-                        "sql_content": sql_content,
-                        "conversion": conversion
-                    })
-                    
+                    conversions.append(
+                        {
+                            "index": i,
+                            "sql_content": sql_content,
+                            "conversion": conversion,
+                        }
+                    )
+
             except Exception as e:
                 print(f"Error converting SQL {i}: {e}")
-        
+
         if not conversions:
             return {
                 "status": "error",
                 "message": "No SQL content could be converted successfully",
-                "suggestions": ["Check SQL syntax", "Ensure valid SQL content"]
+                "suggestions": ["Check SQL syntax", "Ensure valid SQL content"],
             }
-        
+
         # Generate main PySpark modules
         for conv in conversions:
             module_name = f"query_{conv['index'] + 1}_processor"
             project_files[f"src/{module_name}.py"] = _create_pyspark_module(
                 conv["conversion"], module_name, target_platform
             )
-        
+
         # Generate main application
         project_files["src/main.py"] = _create_main_application(
             project_name, conversions, target_platform
         )
-        
+
         # Generate configuration
         project_files["config/settings.py"] = _create_project_config(
             project_name, target_platform
         )
-        
+
         # Generate requirements
         project_files["requirements.txt"] = _create_requirements_file(target_platform)
-        
+
         # Generate tests if requested
         if include_tests:
             for conv in conversions:
@@ -808,17 +841,21 @@ def generate_project_structure(
                 project_files[f"tests/{test_name}.py"] = _create_test_file(
                     conv["conversion"], test_name
                 )
-        
+
         # Generate deployment files
         if target_platform == "aws_glue":
-            project_files["deploy/deploy_glue_jobs.sh"] = _create_glue_deployment_script(conversions)
-            project_files["deploy/terraform/main.tf"] = _create_terraform_config(conversions)
-        
+            project_files["deploy/deploy_glue_jobs.sh"] = (
+                _create_glue_deployment_script(conversions)
+            )
+            project_files["deploy/terraform/main.tf"] = _create_terraform_config(
+                conversions
+            )
+
         # Generate documentation
         project_files["README.md"] = _create_project_readme(
             project_name, conversions, target_platform
         )
-        
+
         return {
             "status": "success",
             "project_name": project_name,
@@ -827,26 +864,40 @@ def generate_project_structure(
             "successful_conversions": len(conversions),
             "project_files": project_files,
             "summary": {
-                "pyspark_modules": len([f for f in project_files.keys() if f.startswith("src/") and f.endswith(".py")]),
-                "test_files": len([f for f in project_files.keys() if f.startswith("tests/")]),
-                "deployment_files": len([f for f in project_files.keys() if f.startswith("deploy/")]),
-                "estimated_performance_improvement": _calculate_project_performance_improvement(conversions)
-            }
+                "pyspark_modules": len(
+                    [
+                        f
+                        for f in project_files.keys()
+                        if f.startswith("src/") and f.endswith(".py")
+                    ]
+                ),
+                "test_files": len(
+                    [f for f in project_files.keys() if f.startswith("tests/")]
+                ),
+                "deployment_files": len(
+                    [f for f in project_files.keys() if f.startswith("deploy/")]
+                ),
+                "estimated_performance_improvement": _calculate_project_performance_improvement(
+                    conversions
+                ),
+            },
         }
-        
+
     except Exception as e:
         return {
             "status": "error",
             "message": f"Project generation failed: {str(e)}",
-            "suggestions": ["Check SQL content", "Try with simpler queries first"]
+            "suggestions": ["Check SQL content", "Try with simpler queries first"],
         }
 
 
 # Helper functions for project generation
-def _create_pyspark_module(conversion: Dict, module_name: str, target_platform: str) -> str:
+def _create_pyspark_module(
+    conversion: Dict, module_name: str, target_platform: str
+) -> str:
     """Create a PySpark module from conversion result"""
     class_name = module_name.replace("_", " ").title().replace(" ", "")
-    
+
     return f'''#!/usr/bin/env python3
 """
 {module_name.replace("_", " ").title()}
@@ -907,17 +958,19 @@ if __name__ == "__main__":
 '''
 
 
-def _create_main_application(project_name: str, conversions: List[Dict], target_platform: str) -> str:
+def _create_main_application(
+    project_name: str, conversions: List[Dict], target_platform: str
+) -> str:
     """Create main application file"""
     imports = []
     processors = []
-    
+
     for conv in conversions:
         module_name = f"query_{conv['index'] + 1}_processor"
         class_name = module_name.replace("_", " ").title().replace(" ", "")
         imports.append(f"from {module_name} import {class_name}")
         processors.append(f"        {class_name}(),")
-    
+
     return f'''#!/usr/bin/env python3
 """
 {project_name} - Main Application
@@ -1020,22 +1073,13 @@ class Config:
 
 def _create_requirements_file(target_platform: str) -> str:
     """Create requirements.txt file"""
-    base_requirements = [
-        "pyspark>=3.4.0",
-        "pandas>=1.5.0",
-        "numpy>=1.21.0"
-    ]
-    
+    base_requirements = ["pyspark>=3.4.0", "pandas>=1.5.0", "numpy>=1.21.0"]
+
     if target_platform == "aws_glue":
-        base_requirements.extend([
-            "boto3>=1.26.0",
-            "awswrangler>=3.0.0"
-        ])
+        base_requirements.extend(["boto3>=1.26.0", "awswrangler>=3.0.0"])
     elif target_platform == "databricks":
-        base_requirements.extend([
-            "databricks-connect>=13.0.0"
-        ])
-    
+        base_requirements.extend(["databricks-connect>=13.0.0"])
+
     return chr(10).join(base_requirements)
 
 
@@ -1111,7 +1155,7 @@ if __name__ == "__main__":
 
 def _create_glue_deployment_script(conversions: List[Dict]) -> str:
     """Create Glue deployment script"""
-    return f'''#!/bin/bash
+    return f"""#!/bin/bash
 # AWS Glue Deployment Script
 # Generated by MCP PySpark Tools
 
@@ -1134,12 +1178,12 @@ echo "⚙️ Creating Glue jobs..."
 
 echo "✅ All Glue jobs deployed successfully!"
 echo "📋 Deployed {len(conversions)} jobs"
-'''
+"""
 
 
 def _create_terraform_config(conversions: List[Dict]) -> str:
     """Create Terraform configuration"""
-    return f'''# Terraform configuration for Glue jobs
+    return f"""# Terraform configuration for Glue jobs
 # Generated by MCP PySpark Tools
 
 terraform {{
@@ -1196,12 +1240,14 @@ resource "aws_glue_job" "query_{conv["index"] + 1}_job" {{
   worker_type      = "G.2X"
   number_of_workers = 4
 }}''' for conv in conversions])}
-'''
+"""
 
 
-def _create_project_readme(project_name: str, conversions: List[Dict], target_platform: str) -> str:
+def _create_project_readme(
+    project_name: str, conversions: List[Dict], target_platform: str
+) -> str:
     """Create project README"""
-    return f'''# {project_name}
+    return f"""# {project_name}
 
 Generated by MCP PySpark Tools - Production-ready PySpark project
 
@@ -1280,14 +1326,14 @@ Each processor module includes:
 - Error handling
 
 Generated by MCP PySpark Tools - Accelerating SQL to PySpark conversion
-'''
+"""
 
 
 def _calculate_project_performance_improvement(conversions: List[Dict]) -> str:
     """Calculate overall project performance improvement"""
     if not conversions:
         return "N/A"
-    
+
     # Extract performance gains and calculate average
     gains = []
     for conv in conversions:
@@ -1303,11 +1349,11 @@ def _calculate_project_performance_improvement(conversions: List[Dict]) -> str:
                     gains.append(30)  # Default
         else:
             gains.append(30)  # Default
-    
+
     if gains:
         avg_improvement = sum(gains) / len(gains)
         return f"{int(avg_improvement - 5)}-{int(avg_improvement + 5)}%"
-    
+
     return "25-35%"
 
 

@@ -2,17 +2,31 @@
 Pytest configuration and fixtures for PySpark Tools testing.
 
 This module provides shared fixtures and configuration for all test modules.
+Includes resource management infrastructure to prevent leaks and test optimizations.
 """
 
 import os
 import shutil
 import sqlite3
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any, Dict, Generator
 from unittest.mock import Mock, patch
 
 import pytest
+
+# Import resource management
+from pyspark_tools.resource_manager import (
+    ResourceManager,
+    get_resource_manager,
+    managed_connection,
+    managed_temp_dir,
+    managed_temp_file,
+)
+
+# Import test optimization
+from pyspark_tools.test_optimizer import TestDataCache, DatabaseOptimizer
 
 from pyspark_tools.batch_processor import (
     BatchProcessor,
@@ -45,25 +59,73 @@ from pyspark_tools.memory_manager import (
 from pyspark_tools.sql_converter import SQLToPySparkConverter
 
 
+# Global test optimization instances
+_test_cache = TestDataCache()
+_db_optimizer = DatabaseOptimizer()
+_cache_lock = threading.Lock()
+
+
+@pytest.fixture(scope="session")
+def test_cache() -> TestDataCache:
+    """Provide session-scoped test data cache."""
+    return _test_cache
+
+
+@pytest.fixture(scope="session")
+def db_optimizer() -> DatabaseOptimizer:
+    """Provide session-scoped database optimizer."""
+    return _db_optimizer
+
+
 @pytest.fixture
-def temp_dir() -> Generator[Path, None, None]:
-    """Create a temporary directory for test data."""
-    temp_path = Path(tempfile.mkdtemp())
-    yield temp_path
-    shutil.rmtree(temp_path, ignore_errors=True)
+def resource_manager() -> Generator[ResourceManager, None, None]:
+    """Provide a resource manager instance for tests with automatic cleanup."""
+    manager = ResourceManager()
+    yield manager
+    # Clean up all resources after test - with timeout protection
+    try:
+        manager.cleanup_all()
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Resource cleanup failed: {e}")
+
+
+@pytest.fixture
+def temp_dir(resource_manager: ResourceManager) -> Generator[Path, None, None]:
+    """Create a temporary directory for test data with resource management."""
+    with managed_temp_dir(prefix="pyspark_tools_test_") as temp_path:
+        yield temp_path
 
 
 @pytest.fixture(scope="session")
-def test_data_dir() -> Path:
-    """Create a temporary directory for test data."""
-    temp_dir = Path(tempfile.mkdtemp(prefix="pyspark_tools_test_"))
-    yield temp_dir
-    shutil.rmtree(temp_dir, ignore_errors=True)
+def test_data_dir() -> Generator[Path, None, None]:
+    """Create a session-scoped temporary directory for test data with cleanup."""
+    session_manager = ResourceManager()
+    temp_path = Path(tempfile.mkdtemp(prefix="pyspark_tools_session_"))
+    resource_id = session_manager.register_temp_file(
+        temp_path, "Session test data directory"
+    )
+
+    try:
+        yield temp_path
+    finally:
+        session_manager.cleanup_resource(resource_id)
 
 
 @pytest.fixture(scope="session")
-def sample_sql_files(test_data_dir: Path) -> Dict[str, Path]:
-    """Create sample SQL files for testing."""
+def sample_sql_files(test_data_dir: Path, test_cache: TestDataCache) -> Dict[str, Path]:
+    """Create sample SQL files for testing with caching."""
+    cache_key = "sample_sql_files"
+    cached_files = test_cache.get(cache_key)
+
+    if cached_files:
+        # Verify cached files still exist
+        all_exist = all(Path(path).exists() for path in cached_files.values())
+        if all_exist:
+            return {name: Path(path) for name, path in cached_files.items()}
+
     sql_files = {}
 
     # Simple SELECT query
@@ -125,6 +187,9 @@ def sample_sql_files(test_data_dir: Path) -> Dict[str, Path]:
     )
     sql_files["oracle"] = oracle_sql
 
+    # Cache the file paths for future use
+    test_cache.set(cache_key, {name: str(path) for name, path in sql_files.items()})
+
     return sql_files
 
 
@@ -145,12 +210,30 @@ def sample_pdf_files(test_data_dir: Path) -> Dict[str, Path]:
 
 
 @pytest.fixture
-def temp_db_path(test_data_dir: Path) -> Generator[Path, None, None]:
-    """Provide a temporary database path for testing."""
-    db_path = test_data_dir / f"test_{os.getpid()}.sqlite"
-    yield db_path
+def temp_db_path(
+    test_data_dir: Path,
+    resource_manager: ResourceManager,
+    db_optimizer: DatabaseOptimizer,
+) -> Generator[Path, None, None]:
+    """Provide an optimized temporary database path for testing."""
+    db_path = test_data_dir / f"test_{os.getpid()}_{threading.get_ident()}.sqlite"
+
+    # Register the database file for cleanup
     if db_path.exists():
         db_path.unlink()
+
+    resource_id = resource_manager.register_temp_file(
+        db_path, f"Test database {db_path.name}"
+    )
+
+    # Create optimized database
+    db_optimizer.create_test_database(str(db_path))
+
+    try:
+        yield db_path
+    finally:
+        # Cleanup is handled by resource_manager fixture teardown
+        pass
 
 
 @pytest.fixture
@@ -160,9 +243,20 @@ def sql_converter() -> SQLToPySparkConverter:
 
 
 @pytest.fixture
-def memory_manager(temp_db_path: Path) -> MemoryManager:
+def memory_manager(temp_db_path: Path) -> Generator[MemoryManager, None, None]:
     """Provide a memory manager instance with temporary database."""
-    return MemoryManager(str(temp_db_path))
+    manager = MemoryManager(str(temp_db_path))
+    try:
+        yield manager
+    finally:
+        # Ensure proper cleanup of database connections
+        if hasattr(manager, "close"):
+            manager.close()
+        elif hasattr(manager, "_conn") and manager._conn:
+            try:
+                manager._conn.close()
+            except Exception:
+                pass
 
 
 @pytest.fixture
@@ -233,7 +327,7 @@ def sample_duplicate_code() -> Dict[str, str]:
 def process_data(df):
     return df.filter(col('active') == 1).select('id', 'name')
 
-def main():
+def run():
     df = spark.table('users')
     result = process_data(df)
     return result
@@ -255,6 +349,7 @@ def setup_test_environment(monkeypatch):
     """Set up test environment variables."""
     monkeypatch.setenv("PYSPARK_TOOLS_TEST_MODE", "1")
     monkeypatch.setenv("PYTHONPATH", str(Path(__file__).parent.parent))
+    yield
 
 
 @pytest.fixture
@@ -327,22 +422,117 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "performance: Performance tests")
 
 
+# Performance monitoring fixtures
+@pytest.fixture(autouse=True)
+def monitor_test_performance(request):
+    """Monitor test performance and detect slow tests."""
+    import time
+
+    start_time = time.time()
+    yield
+    duration = time.time() - start_time
+
+    # Log slow tests (>30 seconds)
+    if duration > 30:
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Slow test detected: {request.node.name} took {duration:.2f}s")
+
+
+@pytest.fixture
+def cached_mock_data(test_cache: TestDataCache):
+    """Provide cached mock data for tests."""
+    cache_key = "mock_test_data"
+    cached_data = test_cache.get(cache_key)
+
+    if cached_data is None:
+        # Generate mock data
+        cached_data = {
+            "users": [
+                {"id": 1, "name": "Alice", "email": "alice@example.com", "active": 1},
+                {"id": 2, "name": "Bob", "email": "bob@example.com", "active": 1},
+                {
+                    "id": 3,
+                    "name": "Charlie",
+                    "email": "charlie@example.com",
+                    "active": 0,
+                },
+            ],
+            "profiles": [
+                {"user_id": 1, "title": "Engineer", "created_at": "2023-01-15"},
+                {"user_id": 2, "title": "Manager", "created_at": "2023-02-01"},
+            ],
+            "orders": [
+                {"id": 1, "user_id": 1, "amount": 100.0},
+                {"id": 2, "user_id": 1, "amount": 150.0},
+                {"id": 3, "user_id": 2, "amount": 200.0},
+            ],
+        }
+        test_cache.set(cache_key, cached_data)
+
+    return cached_data
+
+
+@pytest.fixture
+def optimized_memory_manager(
+    temp_db_path: Path, db_optimizer: DatabaseOptimizer
+) -> MemoryManager:
+    """Provide an optimized memory manager instance with database optimizations."""
+    # Use optimized connection
+    conn = db_optimizer.get_optimized_connection(str(temp_db_path))
+    manager = MemoryManager(str(temp_db_path))
+    return manager
+
+
+# Parallel test safety markers
+def pytest_configure(config):
+    """Configure pytest with custom markers and parallel test detection."""
+    config.addinivalue_line("markers", "sql_converter: SQL converter module tests")
+    config.addinivalue_line("markers", "batch_processor: Batch processor module tests")
+    config.addinivalue_line(
+        "markers", "duplicate_detector: Duplicate detector module tests"
+    )
+    config.addinivalue_line("markers", "file_utils: File utilities module tests")
+    config.addinivalue_line("markers", "server: MCP server module tests")
+    config.addinivalue_line("markers", "memory_manager: Memory manager module tests")
+    config.addinivalue_line("markers", "integration: Integration tests")
+    config.addinivalue_line("markers", "performance: Performance tests")
+    config.addinivalue_line(
+        "markers", "parallel_safe: Tests safe for parallel execution"
+    )
+    config.addinivalue_line(
+        "markers", "sequential_only: Tests that must run sequentially"
+    )
+
+
 def pytest_collection_modifyitems(config, items):
-    """Modify test collection to add markers based on file names."""
+    """Modify test collection to add markers based on file names and parallel safety."""
     for item in items:
         # Add markers based on test file names
         if "test_sql_converter" in item.fspath.basename:
             item.add_marker(pytest.mark.sql_converter)
+            item.add_marker(pytest.mark.parallel_safe)
         elif "test_batch_processor" in item.fspath.basename:
             item.add_marker(pytest.mark.batch_processor)
+            item.add_marker(pytest.mark.parallel_safe)
         elif "test_duplicate_detector" in item.fspath.basename:
             item.add_marker(pytest.mark.duplicate_detector)
+            item.add_marker(pytest.mark.parallel_safe)
         elif "test_file_utils" in item.fspath.basename:
             item.add_marker(pytest.mark.file_utils)
+            item.add_marker(pytest.mark.parallel_safe)
         elif "test_server" in item.fspath.basename:
             item.add_marker(pytest.mark.server)
+            item.add_marker(pytest.mark.sequential_only)  # Server tests use ports
         elif "test_memory_manager" in item.fspath.basename:
             item.add_marker(pytest.mark.memory_manager)
+            item.add_marker(pytest.mark.parallel_safe)
+        elif "test_integration" in item.fspath.basename:
+            item.add_marker(pytest.mark.integration)
+            item.add_marker(
+                pytest.mark.sequential_only
+            )  # Integration tests may conflict
+        elif "test_resource_manager" in item.fspath.basename:
+            item.add_marker(pytest.mark.sequential_only)  # Resource management tests
 
         # Add integration marker for integration tests
         if "integration" in item.name.lower():
@@ -352,3 +542,15 @@ def pytest_collection_modifyitems(config, items):
         if "performance" in item.name.lower():
             item.add_marker(pytest.mark.performance)
             item.add_marker(pytest.mark.slow)
+
+
+# Session cleanup
+def pytest_sessionfinish(session, exitstatus):
+    """Clean up optimization resources at session end."""
+    try:
+        _db_optimizer.cleanup_connections()
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to cleanup database connections: {e}")
