@@ -62,7 +62,9 @@ class TestEnhancedSQLConverter:
         """
 
         result = self.converter.convert_sql_to_pyspark(window_sql)
-        assert any("Window functions" in construct for construct in result.complex_constructs)
+        assert any(
+            "Window functions" in construct for construct in result.complex_constructs
+        )
         assert "Window" in result.pyspark_code
         assert "row_number" in result.pyspark_code.lower()
 
@@ -127,7 +129,9 @@ class TestEnhancedSQLConverter:
         """
 
         result = self.converter.convert_sql_to_pyspark(join_sql)
-        assert any("Complex joins" in construct for construct in result.complex_constructs)
+        assert any(
+            "Complex joins" in construct for construct in result.complex_constructs
+        )
         assert any("broadcast" in opt.lower() for opt in result.optimizations)
 
     def test_fallback_conversion(self):
@@ -204,7 +208,9 @@ class TestEnhancedSQLConverter:
         """
 
         result = self.converter.convert_sql_to_pyspark(case_sql)
-        assert any("CASE statements" in construct for construct in result.complex_constructs)
+        assert any(
+            "CASE statements" in construct for construct in result.complex_constructs
+        )
         assert "when" in result.pyspark_code.lower()
 
     def test_multiple_aggregations(self):
@@ -222,7 +228,10 @@ class TestEnhancedSQLConverter:
         """
 
         result = self.converter.convert_sql_to_pyspark(agg_sql)
-        assert any("Multiple aggregations" in construct for construct in result.complex_constructs)
+        assert any(
+            "Multiple aggregations" in construct
+            for construct in result.complex_constructs
+        )
         assert any("groupBy" in opt for opt in result.optimizations)
 
     def test_error_handling(self):
@@ -261,6 +270,3 @@ class TestEnhancedSQLConverter:
         assert "broadcast" in opt_text or "join" in opt_text
         assert "partition" in opt_text or "cache" in opt_text
         assert "column pruning" in opt_text or "predicate pushdown" in opt_text
-
-
-
