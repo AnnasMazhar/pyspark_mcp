@@ -1,4 +1,4 @@
-name: Simplified CI Pipeline
+name: CI Pipeline
 
 on:
   push:
@@ -7,96 +7,65 @@ on:
     branches: [ main, develop ]
 
 jobs:
-  # Step 1: Install and Test
-  install-and-test:
-    name: Install & Test
+  test:
+    name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
     
     steps:
-    - name: Checkout code
+    - name: Checkout
       uses: actions/checkout@v4
+    
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -e .
+    
+    - name: Run tests with coverage
+      run: |
+        pytest tests/ -v --tb=short \
+          --cov=pyspark_tools \
+          --cov-report=xml \
+          --cov-report=term-missing \
+          --cov-fail-under=70
+    
+    - name: Upload coverage
+      if: matrix.python-version == '3.11'
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        fail_ci_if_error: false
 
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v4
+  lint:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Setup Python
+      uses: actions/setup-python@v5
       with:
         python-version: "3.11"
         cache: 'pip'
-
-    - name: Create virtual environment
-      run: |
-        python -m venv .venv
-        source .venv/bin/activate
-        echo "VIRTUAL_ENV=$VIRTUAL_ENV" >> $GITHUB_ENV
-        echo "$VIRTUAL_ENV/bin" >> $GITHUB_PATH
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -e .
-
-    - name: Run basic tests
-      run: |
-        source .venv/bin/activate
-        python test.py --ci
-
-  # Step 2: Generate Diff Report
-  diff-report:
-    name: Generate Diff Report
-    runs-on: ubuntu-latest
-    needs: install-and-test
-    if: github.event_name == 'pull_request'
     
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-
-    - name: Generate diff report
-      run: |
-        echo "## 📋 Changes Summary" > diff-report.md
-        echo "" >> diff-report.md
-        echo "### Files Changed:" >> diff-report.md
-        git diff --name-only origin/main...HEAD | while read file; do
-          echo "- \`$file\`" >> diff-report.md
-        done
-        echo "" >> diff-report.md
-        echo "### Detailed Diff:" >> diff-report.md
-        echo "\`\`\`diff" >> diff-report.md
-        git diff origin/main...HEAD >> diff-report.md
-        echo "\`\`\`" >> diff-report.md
-
-    - name: Comment PR with diff
-      uses: actions/github-script@v7
-      if: github.event_name == 'pull_request'
-      with:
-        script: |
-          const fs = require('fs');
-          const diffReport = fs.readFileSync('diff-report.md', 'utf8');
-          
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: diffReport
-          });
-
-  # Step 3: Manual Merge Gate
-  manual-merge-gate:
-    name: Ready for Manual Merge
-    runs-on: ubuntu-latest
-    needs: [install-and-test, diff-report]
-    if: always() && needs.install-and-test.result == 'success'
+    - name: Install linters
+      run: pip install black isort flake8
     
-    steps:
-    - name: Manual merge required
+    - name: Check formatting
       run: |
-        echo "✅ All automated checks passed!"
-        echo "📋 Diff report generated (if PR)"
-        echo "🔄 Ready for manual review and merge"
-        echo ""
-        echo "Next steps:"
-        echo "1. Review the diff report in PR comments"
-        echo "2. Manually test any critical changes"
-        echo "3. Merge when satisfied with changes"
+        black --check pyspark_tools tests || echo "::warning::Code needs formatting"
+        isort --check pyspark_tools tests || echo "::warning::Imports need sorting"
+    
+    - name: Lint
+      run: flake8 pyspark_tools tests --max-line-length=88 --extend-ignore=E203 || echo "::warning::Linting issues found"

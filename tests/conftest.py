@@ -16,17 +16,6 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-# Import resource management
-from pyspark_tools.resource_manager import (
-    ResourceManager,
-    get_resource_manager,
-    managed_connection,
-    managed_temp_dir,
-    managed_temp_file,
-)
-
-# Test optimization imports removed - not currently used in tests
-
 from pyspark_tools.batch_processor import (
     BatchProcessor,
     BatchProgress,
@@ -54,8 +43,21 @@ from pyspark_tools.memory_manager import (
     PerformanceMetric,
 )
 
+# Import resource management
+from pyspark_tools.resource_manager import (
+    ResourceManager,
+    get_resource_manager,
+    managed_connection,
+    managed_temp_dir,
+    managed_temp_file,
+)
+
 # Import modules under test
 from pyspark_tools.sql_converter import SQLToPySparkConverter
+
+# Test optimization imports removed - not currently used in tests
+
+
 
 
 # Global test optimization instances - removed for CI compatibility
@@ -206,6 +208,7 @@ def temp_db_path(
 
     # Create basic database
     import sqlite3
+
     conn = sqlite3.connect(str(db_path))
     conn.close()
 
@@ -423,26 +426,26 @@ def cached_mock_data():
     """Provide mock data for tests."""
     # Generate mock data
     cached_data = {
-            "users": [
-                {"id": 1, "name": "Alice", "email": "alice@example.com", "active": 1},
-                {"id": 2, "name": "Bob", "email": "bob@example.com", "active": 1},
-                {
-                    "id": 3,
-                    "name": "Charlie",
-                    "email": "charlie@example.com",
-                    "active": 0,
-                },
-            ],
-            "profiles": [
-                {"user_id": 1, "title": "Engineer", "created_at": "2023-01-15"},
-                {"user_id": 2, "title": "Manager", "created_at": "2023-02-01"},
-            ],
-            "orders": [
-                {"id": 1, "user_id": 1, "amount": 100.0},
-                {"id": 2, "user_id": 1, "amount": 150.0},
-                {"id": 3, "user_id": 2, "amount": 200.0},
-            ],
-        }
+        "users": [
+            {"id": 1, "name": "Alice", "email": "alice@example.com", "active": 1},
+            {"id": 2, "name": "Bob", "email": "bob@example.com", "active": 1},
+            {
+                "id": 3,
+                "name": "Charlie",
+                "email": "charlie@example.com",
+                "active": 0,
+            },
+        ],
+        "profiles": [
+            {"user_id": 1, "title": "Engineer", "created_at": "2023-01-15"},
+            {"user_id": 2, "title": "Manager", "created_at": "2023-02-01"},
+        ],
+        "orders": [
+            {"id": 1, "user_id": 1, "amount": 100.0},
+            {"id": 2, "user_id": 1, "amount": 150.0},
+            {"id": 3, "user_id": 2, "amount": 200.0},
+        ],
+    }
 
     return cached_data
 

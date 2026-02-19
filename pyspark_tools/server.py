@@ -16,7 +16,7 @@ from .aws_glue_integration import (
 )
 from .batch_processor import BatchProcessor
 from .code_reviewer import PySparkCodeReviewer
-from .data_source_analyzer import DataSourceAnalyzer, DataSourceInfo, CodebaseAnalysis
+from .data_source_analyzer import CodebaseAnalysis, DataSourceAnalyzer, DataSourceInfo
 from .duplicate_detector import DuplicateDetector
 from .memory_manager import MemoryManager
 from .sql_converter import SQLToPySparkConverter
