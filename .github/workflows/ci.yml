@@ -31,6 +31,8 @@ jobs:
       run: |
         python -c "import pyspark_tools; print('✓ Package installed')"
         python -m pytest --version
+        ls -la tests/ | head -10
+        find tests/ -name "test_*.py" | head -5
     
     - name: Run tests
       run: python -m pytest -v --tb=short

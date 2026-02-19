@@ -86,8 +86,6 @@ htmlcov/
 .nox/
 
 # Testing and Development Files (keep for local testing)
-test_*.py
-*_test.py
 test_query.sql
 converted_pyspark.py
 test_docker_environment.py
