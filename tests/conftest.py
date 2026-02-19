@@ -25,8 +25,7 @@ from pyspark_tools.resource_manager import (
     managed_temp_file,
 )
 
-# Import test optimization
-from pyspark_tools.test_optimizer import TestDataCache, DatabaseOptimizer
+# Test optimization imports removed - not currently used in tests
 
 from pyspark_tools.batch_processor import (
     BatchProcessor,
@@ -59,22 +58,11 @@ from pyspark_tools.memory_manager import (
 from pyspark_tools.sql_converter import SQLToPySparkConverter
 
 
-# Global test optimization instances
-_test_cache = TestDataCache()
-_db_optimizer = DatabaseOptimizer()
+# Global test optimization instances - removed for CI compatibility
 _cache_lock = threading.Lock()
 
 
-@pytest.fixture(scope="session")
-def test_cache() -> TestDataCache:
-    """Provide session-scoped test data cache."""
-    return _test_cache
-
-
-@pytest.fixture(scope="session")
-def db_optimizer() -> DatabaseOptimizer:
-    """Provide session-scoped database optimizer."""
-    return _db_optimizer
+# Database optimizer fixture removed for CI compatibility
 
 
 @pytest.fixture
@@ -115,16 +103,8 @@ def test_data_dir() -> Generator[Path, None, None]:
 
 
 @pytest.fixture(scope="session")
-def sample_sql_files(test_data_dir: Path, test_cache: TestDataCache) -> Dict[str, Path]:
-    """Create sample SQL files for testing with caching."""
-    cache_key = "sample_sql_files"
-    cached_files = test_cache.get(cache_key)
-
-    if cached_files:
-        # Verify cached files still exist
-        all_exist = all(Path(path).exists() for path in cached_files.values())
-        if all_exist:
-            return {name: Path(path) for name, path in cached_files.items()}
+def sample_sql_files(test_data_dir: Path) -> Dict[str, Path]:
+    """Create sample SQL files for testing."""
 
     sql_files = {}
 
@@ -187,8 +167,7 @@ def sample_sql_files(test_data_dir: Path, test_cache: TestDataCache) -> Dict[str
     )
     sql_files["oracle"] = oracle_sql
 
-    # Cache the file paths for future use
-    test_cache.set(cache_key, {name: str(path) for name, path in sql_files.items()})
+    # File paths created for testing
 
     return sql_files
 
@@ -211,12 +190,11 @@ def sample_pdf_files(test_data_dir: Path) -> Dict[str, Path]:
 
 @pytest.fixture
 def temp_db_path(
-    test_data_dir: Path,
+    tmp_path: Path,
     resource_manager: ResourceManager,
-    db_optimizer: DatabaseOptimizer,
 ) -> Generator[Path, None, None]:
-    """Provide an optimized temporary database path for testing."""
-    db_path = test_data_dir / f"test_{os.getpid()}_{threading.get_ident()}.sqlite"
+    """Provide a temporary database path for testing."""
+    db_path = tmp_path / f"test_{os.getpid()}_{threading.get_ident()}.sqlite"
 
     # Register the database file for cleanup
     if db_path.exists():
@@ -226,8 +204,10 @@ def temp_db_path(
         db_path, f"Test database {db_path.name}"
     )
 
-    # Create optimized database
-    db_optimizer.create_test_database(str(db_path))
+    # Create basic database
+    import sqlite3
+    conn = sqlite3.connect(str(db_path))
+    conn.close()
 
     try:
         yield db_path
@@ -439,14 +419,10 @@ def monitor_test_performance(request):
 
 
 @pytest.fixture
-def cached_mock_data(test_cache: TestDataCache):
-    """Provide cached mock data for tests."""
-    cache_key = "mock_test_data"
-    cached_data = test_cache.get(cache_key)
-
-    if cached_data is None:
-        # Generate mock data
-        cached_data = {
+def cached_mock_data():
+    """Provide mock data for tests."""
+    # Generate mock data
+    cached_data = {
             "users": [
                 {"id": 1, "name": "Alice", "email": "alice@example.com", "active": 1},
                 {"id": 2, "name": "Bob", "email": "bob@example.com", "active": 1},
@@ -467,18 +443,13 @@ def cached_mock_data(test_cache: TestDataCache):
                 {"id": 3, "user_id": 2, "amount": 200.0},
             ],
         }
-        test_cache.set(cache_key, cached_data)
 
     return cached_data
 
 
 @pytest.fixture
-def optimized_memory_manager(
-    temp_db_path: Path, db_optimizer: DatabaseOptimizer
-) -> MemoryManager:
-    """Provide an optimized memory manager instance with database optimizations."""
-    # Use optimized connection
-    conn = db_optimizer.get_optimized_connection(str(temp_db_path))
+def optimized_memory_manager(temp_db_path: Path) -> MemoryManager:
+    """Provide a memory manager instance for testing."""
     manager = MemoryManager(str(temp_db_path))
     return manager
 
