@@ -36,7 +36,9 @@ jobs:
         pip install -e .
 
     - name: Run basic tests
-      run: python test.py --ci
+      run: |
+        source .venv/bin/activate
+        python test.py --ci
 
   # Step 2: Generate Diff Report
   diff-report:
