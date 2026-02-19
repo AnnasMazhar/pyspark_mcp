@@ -58,8 +58,6 @@ from pyspark_tools.sql_converter import SQLToPySparkConverter
 # Test optimization imports removed - not currently used in tests
 
 
-
-
 # Global test optimization instances - removed for CI compatibility
 _cache_lock = threading.Lock()
 
