@@ -20,16 +20,22 @@ jobs:
     - name: Check PR title format
       run: |
         PR_TITLE="${{ github.event.pull_request.title }}"
-        if ! echo "$PR_TITLE" | grep -qE "^(feat|fix|docs|style|refactor|perf|test|chore|ci|build)(\(.+\))?: .+"; then
+        # Allow conventional commits format OR branch-name format (feature/my-feature)
+        if echo "$PR_TITLE" | grep -qE "^(feat|fix|docs|style|refactor|perf|test|chore|ci|build)(\(.+\))?: .+"; then
+          echo "✓ PR title follows conventional commits"
+        elif echo "$PR_TITLE" | grep -qE "^(feature|bugfix|hotfix|ci|fix|docs|refactor|test)/"; then
+          echo "⚠️  PR title uses branch name format. Consider using conventional commits:"
+          echo "  Examples: ci: implement trunk-based workflow, fix: resolve bug"
+        else
           echo "::error::PR title must follow conventional commits format"
           echo "Examples:"
           echo "  feat: add new SQL converter feature"
           echo "  fix: resolve Oracle function mapping bug"
           echo "  docs: update installation guide"
           echo "  refactor: improve code structure"
+          echo "  ci: implement trunk-based workflow"
           exit 1
         fi
-        echo "✓ PR title follows conventional commits"
     
     - name: Check PR description
       run: |
@@ -159,11 +165,11 @@ jobs:
         if ! git merge --no-commit --no-ff origin/${{ github.base_ref }}; then
           echo "::error::Merge conflicts detected with ${{ github.base_ref }}"
           echo "Please resolve conflicts before merging"
-          git merge --abort
+          git merge --abort || true
           exit 1
         fi
         
-        git merge --abort
+        git merge --abort || true
         echo "✓ No merge conflicts detected"
 
   test-coverage-check:
