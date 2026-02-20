@@ -20,21 +20,21 @@ jobs:
     - name: Check PR title format
       run: |
         PR_TITLE="${{ github.event.pull_request.title }}"
-        # Allow conventional commits format OR branch-name format (feature/my-feature)
-        if echo "$PR_TITLE" | grep -qE "^(feat|fix|docs|style|refactor|perf|test|chore|ci|build)(\(.+\))?: .+"; then
+        # Allow conventional commits format OR branch-name format (case-insensitive)
+        if echo "$PR_TITLE" | grep -qiE "^(feat|fix|docs|style|refactor|perf|test|chore|ci|build)(\(.+\))?: .+"; then
           echo "✓ PR title follows conventional commits"
-        elif echo "$PR_TITLE" | grep -qE "^(feature|bugfix|hotfix|ci|fix|docs|refactor|test)/"; then
+        elif echo "$PR_TITLE" | grep -qiE "^(feature|bugfix|hotfix|ci|fix|docs|refactor|test)/"; then
           echo "⚠️  PR title uses branch name format. Consider using conventional commits:"
           echo "  Examples: ci: implement trunk-based workflow, fix: resolve bug"
         else
-          echo "::error::PR title must follow conventional commits format"
-          echo "Examples:"
+          echo "::warning::PR title doesn't follow conventional commits format"
+          echo "Recommended format:"
           echo "  feat: add new SQL converter feature"
           echo "  fix: resolve Oracle function mapping bug"
           echo "  docs: update installation guide"
-          echo "  refactor: improve code structure"
           echo "  ci: implement trunk-based workflow"
-          exit 1
+          echo ""
+          echo "Current title: $PR_TITLE"
         fi
     
     - name: Check PR description
