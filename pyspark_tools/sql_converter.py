@@ -308,11 +308,12 @@ class SQLToPySparkConverter:
         # Extract and handle main query components
         from_clause = self._extract_from_clause(parsed_sql)
 
-        # Add table loading
-        if from_clause:
-            for table in from_clause:
-                code_lines.append(f"# Load table: {table}")
-                code_lines.append(f"{table}_df = spark.table('{table}')")
+        # Add table loading - extract all unique table names
+        all_tables = self._extract_all_tables(parsed_sql)
+        if all_tables:
+            for table_name in all_tables:
+                code_lines.append(f"# Load table: {table_name}")
+                code_lines.append(f"{table_name}_df = spark.table('{table_name}')")
             code_lines.append("")
 
         # Handle subqueries
@@ -412,8 +413,10 @@ class SQLToPySparkConverter:
             query_parts = []
 
             if from_clause:
-                main_table = from_clause[0]
-                query_parts.append(f"result_df = {main_table}_df")
+                main_table_name, main_table_alias = from_clause[0]
+                query_parts.append(
+                    f"result_df = {main_table_name}_df.alias('{main_table_alias}')"
+                )
 
             # Add joins
             if joins:
@@ -460,96 +463,195 @@ class SQLToPySparkConverter:
         """Extract SELECT clause with enhanced dialect-specific function handling."""
         try:
             if hasattr(parsed_sql, "expressions"):
+                # Build alias map for resolving references within same SELECT
+                alias_map = {}
+                for expr in parsed_sql.expressions:
+                    if hasattr(expr, "alias") and expr.alias:
+                        alias_map[expr.alias] = expr.this
+
+                # Convert expressions, resolving alias references
                 columns = []
                 for expr in parsed_sql.expressions:
-                    column_expr = self._convert_expression_to_pyspark(expr, dialect)
+                    column_expr = self._convert_expression_to_pyspark_with_aliases(
+                        expr, dialect, alias_map
+                    )
                     columns.append(column_expr)
                 return ", ".join(columns)
         except Exception as e:
             self.logger.warning(f"Error extracting select clause: {str(e)}")
         return "*"
 
+    def _convert_expression_to_pyspark_with_aliases(
+        self, expr, dialect: str, alias_map: dict
+    ) -> str:
+        """Convert expression, resolving alias references from the same SELECT clause."""
+        # Check if this is a column reference to an alias in the same SELECT
+        if isinstance(expr, sqlglot.expressions.Alias) and hasattr(expr, "this"):
+            resolved_expr = self._resolve_alias_references(expr.this, alias_map)
+            converted = self._convert_expression_to_pyspark(resolved_expr, dialect)
+            alias = str(expr.alias).strip('"').strip("'")
+            return f"({converted}).alias('{alias}')"
+
+        resolved_expr = self._resolve_alias_references(expr, alias_map)
+        return self._convert_expression_to_pyspark(resolved_expr, dialect)
+
+    def _resolve_alias_references(self, expr, alias_map: dict):
+        """Recursively resolve column references that point to aliases in the same SELECT."""
+        if isinstance(expr, sqlglot.expressions.Column):
+            col_name = expr.name if hasattr(expr, "name") else str(expr)
+            # If this column name matches an alias, replace with the actual expression
+            if col_name in alias_map:
+                return alias_map[col_name]
+
+        # Recursively resolve in child expressions
+        if hasattr(expr, "args"):
+            for key, value in expr.args.items():
+                if isinstance(value, sqlglot.expressions.Expression):
+                    expr.args[key] = self._resolve_alias_references(value, alias_map)
+                elif isinstance(value, list):
+                    expr.args[key] = [
+                        (
+                            self._resolve_alias_references(v, alias_map)
+                            if isinstance(v, sqlglot.expressions.Expression)
+                            else v
+                        )
+                        for v in value
+                    ]
+
+        return expr
+        return "*"
+
     def _convert_expression_to_pyspark(self, expr, dialect: str) -> str:
         """Convert SQL expression to PySpark with dialect-specific function mapping."""
         try:
-            expr_str = str(expr)
-
             # Handle aliases
             if hasattr(expr, "alias") and expr.alias:
                 base_expr = self._convert_expression_to_pyspark(expr.this, dialect)
-                return f"({base_expr}).alias('{expr.alias}')"
+                alias = str(expr.alias).strip('"').strip("'")
+                return f"({base_expr}).alias('{alias}')"
 
-            # Handle SQLGlot expression types directly
+            # Handle Column references
+            if isinstance(expr, sqlglot.expressions.Column):
+                table = expr.table if hasattr(expr, "table") and expr.table else None
+                column = expr.name if hasattr(expr, "name") else str(expr)
+                column = column.strip('"').strip("'")
+
+                if table:
+                    return f"col('{table}.{column}')"
+                else:
+                    return f"col('{column}')"
+
+            # Handle aggregate functions
+            if isinstance(expr, sqlglot.expressions.Count):
+                if hasattr(expr, "this") and expr.this:
+                    # Check if this is COUNT(DISTINCT ...)
+                    if isinstance(expr.this, sqlglot.expressions.Distinct):
+                        if expr.this.expressions:
+                            arg = self._convert_expression_to_pyspark(
+                                expr.this.expressions[0], dialect
+                            )
+                            return f"countDistinct({arg})"
+                    arg = self._convert_expression_to_pyspark(expr.this, dialect)
+                    return f"count({arg})"
+                return "count('*')"
+
+            # Handle other common functions
             expr_type = type(expr).__name__
 
-            # Handle Redshift date functions
-            if expr_type == "TsOrDsAdd" and dialect == "redshift":
-                # Convert TS_OR_DS_ADD to date_add
-                date_col = self._convert_expression_to_pyspark(expr.this, dialect)
-                days = str(expr.expression) if hasattr(expr, "expression") else "1"
-                return f"date_add({date_col}, {days})"
+            if expr_type in ["Sum", "Avg", "Min", "Max"]:
+                func_name = expr_type.lower()
+                arg = self._convert_expression_to_pyspark(expr.this, dialect)
+                return f"{func_name}({arg})"
 
-            elif expr_type == "TsOrDsDiff" and dialect == "redshift":
-                # Convert TS_OR_DS_DIFF to datediff
-                end_date = self._convert_expression_to_pyspark(expr.this, dialect)
-                start_date = (
-                    self._convert_expression_to_pyspark(expr.expression, dialect)
-                    if hasattr(expr, "expression")
-                    else "col('date')"
-                )
-                return f"datediff({end_date}, {start_date})"
+            # Handle ROUND
+            if isinstance(expr, sqlglot.expressions.Round):
+                arg = self._convert_expression_to_pyspark(expr.this, dialect)
+                decimals = expr.args.get("decimals")
+                if decimals:
+                    dec_val = self._convert_expression_to_pyspark(decimals, dialect)
+                    return f"round({arg}, {dec_val})"
+                return f"round({arg})"
 
-            # Handle Coalesce function
-            elif expr_type == "Coalesce":
-                args = [
-                    self._convert_expression_to_pyspark(arg, dialect)
-                    for arg in expr.expressions
-                ]
-                return f"coalesce({', '.join(args)})"
+            # Handle NULLIF
+            if isinstance(expr, sqlglot.expressions.Nullif):
+                arg1 = self._convert_expression_to_pyspark(expr.this, dialect)
+                arg2 = self._convert_expression_to_pyspark(expr.expression, dialect)
+                return f"when({arg1} == {arg2}, lit(None)).otherwise({arg1})"
 
-            # Handle Anonymous functions (like ISNULL)
-            elif expr_type == "Anonymous":
-                func_name = str(expr.this).lower()
-                if dialect == "redshift" and func_name == "isnull":
-                    args = [
-                        self._convert_expression_to_pyspark(arg, dialect)
-                        for arg in expr.expressions
-                    ]
-                    return f"coalesce({', '.join(args)})"
-
-            # Handle function calls
-            elif hasattr(expr, "this") and hasattr(expr, "expressions"):
-                # This is likely a function call
-                func_name = str(expr.this).lower()
-                if (
-                    dialect in self.function_mappings
-                    and func_name in self.function_mappings[dialect]
-                ):
-                    return self._map_dialect_function(
-                        func_name, expr.expressions, dialect
+            # Handle CASE expressions
+            if isinstance(expr, sqlglot.expressions.Case):
+                conditions = []
+                for i, when_expr in enumerate(expr.args.get("ifs", [])):
+                    condition = self._convert_expression_to_filter(when_expr.this)
+                    value = self._convert_expression_to_pyspark(
+                        when_expr.args.get("true"), dialect
                     )
+                    if i == 0:
+                        conditions.append(f"when({condition}, {value})")
+                    else:
+                        conditions.append(f".when({condition}, {value})")
 
-            # Handle column references
-            elif expr_type == "Column":
-                return f"col('{expr.this}')"
+                # Handle ELSE clause
+                else_value = expr.args.get("default")
+                if else_value:
+                    else_val = self._convert_expression_to_pyspark(else_value, dialect)
+                    conditions.append(f".otherwise({else_val})")
+
+                return "".join(conditions)
+
+            # Handle arithmetic operations
+            if isinstance(
+                expr,
+                (
+                    sqlglot.expressions.Div,
+                    sqlglot.expressions.Mul,
+                    sqlglot.expressions.Add,
+                    sqlglot.expressions.Sub,
+                ),
+            ):
+                left = self._convert_expression_to_pyspark(expr.this, dialect)
+                right = self._convert_expression_to_pyspark(expr.expression, dialect)
+                op = (
+                    "/"
+                    if isinstance(expr, sqlglot.expressions.Div)
+                    else (
+                        "*"
+                        if isinstance(expr, sqlglot.expressions.Mul)
+                        else "+" if isinstance(expr, sqlglot.expressions.Add) else "-"
+                    )
+                )
+                return f"({left} {op} {right})"
+
+            # Handle CAST
+            if isinstance(expr, sqlglot.expressions.Cast):
+                arg = self._convert_expression_to_pyspark(expr.this, dialect)
+                to_type = str(expr.to).lower()
+                # Map SQL types to PySpark types
+                if "decimal" in to_type or "numeric" in to_type:
+                    return f"{arg}.cast('decimal(10,2)')"
+                elif "int" in to_type:
+                    return f"{arg}.cast('int')"
+                elif "string" in to_type or "varchar" in to_type:
+                    return f"{arg}.cast('string')"
+                return f"{arg}.cast('{to_type}')"
 
             # Handle literals
-            elif expr_type == "Literal":
+            if isinstance(expr, sqlglot.expressions.Literal):
                 if expr.is_string:
                     return f"lit('{expr.this}')"
-                else:
-                    return f"lit({expr.this})"
+                return f"lit({expr.this})"
 
-            # Handle simple column references
-            elif hasattr(expr, "this") and not hasattr(expr, "expressions"):
-                return f"col('{expr.this}')"
-
-            # Fallback to string conversion with function mapping
-            return self._convert_function_calls(expr_str, dialect)
+            # Fallback to string representation
+            expr_str = str(expr).strip('"').strip("'")
+            return f"col('{expr_str}')"
 
         except Exception as e:
-            self.logger.warning(f"Error converting expression {expr}: {str(e)}")
-            return f"col('{str(expr)}')"
+            self.logger.warning(f"Error converting expression: {str(e)}")
+            return f"col('{str(expr)}')".replace('"', "")
+
+    def _extract_joins(self, parsed_sql, dialect: str) -> List[str]:
+        self.logger.warning(f"Error converting expression {expr}: {str(e)}")
+        return f"col('{str(expr)}')"
 
     def _convert_function_calls(self, expr_str: str, dialect: str) -> str:
         """Convert dialect-specific function calls to PySpark equivalents."""
@@ -613,24 +715,112 @@ class SQLToPySparkConverter:
                 joins = list(parsed_sql.find_all(sqlglot.expressions.Join))
 
                 for join in joins:
-                    join_type = "inner"  # default
-                    if hasattr(join, "kind") and join.kind:
+                    # Extract join type
+                    join_type = "inner"
+                    if hasattr(join, "side") and join.side:
+                        join_type = str(join.side).lower()
+                    elif hasattr(join, "kind") and join.kind:
                         join_type = str(join.kind).lower()
 
                     if hasattr(join, "this"):
-                        right_table = str(join.this)
-                        join_condition = (
-                            str(join.on) if hasattr(join, "on") and join.on else "True"
-                        )
+                        # Extract table name and alias
+                        right_table_expr = join.this
+                        table_name = None
+                        table_alias = None
+
+                        if hasattr(right_table_expr, "name"):
+                            table_name = right_table_expr.name
+                        if (
+                            hasattr(right_table_expr, "alias")
+                            and right_table_expr.alias
+                        ):
+                            table_alias = right_table_expr.alias
+
+                        # Use table name for dataframe variable, alias for column references
+                        df_var = table_name if table_name else table_alias
+                        alias_name = table_alias if table_alias else table_name
+
+                        # Get join condition from args
+                        join_condition = "True"
+                        if hasattr(join, "args") and "on" in join.args:
+                            join_condition = self._convert_join_condition(
+                                join.args["on"]
+                            )
 
                         join_lines.append(
-                            f"    .join({right_table}_df, {join_condition}, '{join_type}')"
+                            f"    .join({df_var}_df.alias('{alias_name}'), {join_condition}, '{join_type}')"
                         )
 
         except Exception as e:
             self.logger.warning(f"Error extracting joins: {str(e)}")
 
         return join_lines
+
+    def _convert_join_condition(self, condition_expr) -> str:
+        """Convert SQL join condition to PySpark expression."""
+        try:
+            # Handle AND conditions (multiple join keys)
+            if isinstance(condition_expr, sqlglot.expressions.And):
+                left_cond = self._convert_join_condition(condition_expr.left)
+                right_cond = self._convert_join_condition(condition_expr.right)
+                return f"({left_cond}) & ({right_cond})"
+
+            # Handle EQ (equality) conditions
+            if isinstance(condition_expr, sqlglot.expressions.EQ):
+                left = self._convert_column_ref(condition_expr.left)
+                right = self._convert_column_ref(condition_expr.right)
+                return f"({left} == {right})"
+
+            # Fallback
+            return "True"
+        except Exception as e:
+            self.logger.warning(f"Error converting join condition: {str(e)}")
+            return "True"
+
+    def _convert_column_ref(self, col_expr) -> str:
+        """Convert column reference to PySpark col() expression."""
+        try:
+            if isinstance(col_expr, sqlglot.expressions.Column):
+                table_alias = (
+                    col_expr.table
+                    if hasattr(col_expr, "table") and col_expr.table
+                    else None
+                )
+                column = col_expr.name if hasattr(col_expr, "name") else str(col_expr)
+
+                # Remove quotes from column name
+                column = column.strip('"').strip("'")
+
+                if table_alias:
+                    # For now, just use col() with table.column notation
+                    # This works when dataframes are properly aliased in joins
+                    return f"col('{table_alias}.{column}')"
+                else:
+                    return f"col('{column}')"
+            elif isinstance(col_expr, sqlglot.expressions.Literal):
+                # Handle literals in join conditions
+                value = col_expr.this
+                if col_expr.is_string:
+                    return f"lit('{value}')"
+                else:
+                    return f"lit({value})"
+            elif isinstance(col_expr, sqlglot.expressions.Cast):
+                # Handle CAST expressions in join conditions
+                inner = self._convert_column_ref(col_expr.this)
+                to_type = str(col_expr.to).lower()
+                # Map SQL types to PySpark types
+                if "int" in to_type:
+                    return f"{inner}.cast('int')"
+                elif "decimal" in to_type or "numeric" in to_type:
+                    return f"{inner}.cast('decimal(10,2)')"
+                elif "string" in to_type or "varchar" in to_type:
+                    return f"{inner}.cast('string')"
+                return f"{inner}.cast('{to_type}')"
+            else:
+                col_str = str(col_expr).strip('"').strip("'")
+                return f"col('{col_str}')"
+        except Exception:
+            return f"col('{str(col_expr)}')"
 
     def _extract_having_clause(self, parsed_sql) -> Optional[str]:
         """Extract HAVING clause."""
@@ -639,7 +829,7 @@ class SQLToPySparkConverter:
                 sqlglot.expressions.Having
             ):
                 having_expr = parsed_sql.find(sqlglot.expressions.Having)
-                return self._convert_where_to_filter(str(having_expr.this))
+                return self._convert_expression_to_filter(having_expr.this)
         except Exception as e:
             self.logger.warning(f"Error extracting having clause: {str(e)}")
         return None
@@ -697,16 +887,38 @@ class SQLToPySparkConverter:
             self.logger.warning(f"Error building window spec: {str(e)}")
             return "row_number().over(Window.partitionBy())"
 
-    def _extract_from_clause(self, parsed_sql) -> List[str]:
-        """Extract table names from FROM clause."""
+    def _extract_from_clause(self, parsed_sql) -> List[tuple]:
+        """Extract table names and aliases from FROM clause."""
         tables = []
         try:
-            if hasattr(parsed_sql, "find_all"):
-                for table in parsed_sql.find_all(sqlglot.expressions.Table):
-                    tables.append(table.name)
+            if hasattr(parsed_sql, "find"):
+                # Get the main FROM table (not joins)
+                from_expr = parsed_sql.find(sqlglot.expressions.From)
+                if from_expr and hasattr(from_expr, "this"):
+                    table = from_expr.this
+                    if hasattr(table, "name"):
+                        table_name = table.name
+                        table_alias = (
+                            table.alias
+                            if hasattr(table, "alias") and table.alias
+                            else table_name
+                        )
+                        tables.append((table_name, table_alias))
         except:
             pass
         return tables
+
+    def _extract_all_tables(self, parsed_sql) -> List[str]:
+        """Extract all unique table names for loading."""
+        tables = set()
+        try:
+            if hasattr(parsed_sql, "find_all"):
+                for table in parsed_sql.find_all(sqlglot.expressions.Table):
+                    if hasattr(table, "name"):
+                        tables.add(table.name)
+        except:
+            pass
+        return sorted(list(tables))
 
     def _extract_where_clause(self, parsed_sql) -> Optional[str]:
         """Extract WHERE clause and convert to PySpark filter."""
@@ -715,10 +927,167 @@ class SQLToPySparkConverter:
                 sqlglot.expressions.Where
             ):
                 where_expr = parsed_sql.find(sqlglot.expressions.Where)
-                return self._convert_where_to_filter(str(where_expr.this))
+                return self._convert_expression_to_filter(where_expr.this)
         except:
             pass
         return None
+
+    def _convert_expression_to_filter(self, expr) -> str:
+        """Convert SQL expression to PySpark filter expression."""
+        try:
+            # Handle Paren (parentheses wrapper)
+            if isinstance(expr, sqlglot.expressions.Paren):
+                return self._convert_expression_to_filter(expr.this)
+
+            # Handle AND
+            if isinstance(expr, sqlglot.expressions.And):
+                left = self._convert_expression_to_filter(expr.left)
+                right = self._convert_expression_to_filter(expr.right)
+                return f"({left}) & ({right})"
+
+            # Handle OR
+            if isinstance(expr, sqlglot.expressions.Or):
+                left = self._convert_expression_to_filter(expr.left)
+                right = self._convert_expression_to_filter(expr.right)
+                return f"({left}) | ({right})"
+
+            # Handle comparisons
+            if isinstance(expr, sqlglot.expressions.EQ):
+                left = self._convert_filter_operand(expr.left)
+                right = self._convert_filter_operand(expr.right)
+                return f"({left} == {right})"
+
+            if isinstance(expr, sqlglot.expressions.NEQ):
+                left = self._convert_filter_operand(expr.left)
+                right = self._convert_filter_operand(expr.right)
+                return f"({left} != {right})"
+
+            if isinstance(expr, sqlglot.expressions.GT):
+                left = self._convert_filter_operand(expr.left)
+                right = self._convert_filter_operand(expr.right)
+                return f"({left} > {right})"
+
+            if isinstance(expr, sqlglot.expressions.GTE):
+                left = self._convert_filter_operand(expr.left)
+                right = self._convert_filter_operand(expr.right)
+                return f"({left} >= {right})"
+
+            if isinstance(expr, sqlglot.expressions.LT):
+                left = self._convert_filter_operand(expr.left)
+                right = self._convert_filter_operand(expr.right)
+                return f"({left} < {right})"
+
+            if isinstance(expr, sqlglot.expressions.LTE):
+                left = self._convert_filter_operand(expr.left)
+                right = self._convert_filter_operand(expr.right)
+                return f"({left} <= {right})"
+
+            # Handle LIKE
+            if isinstance(expr, sqlglot.expressions.Like):
+                left = self._convert_filter_operand(expr.this)
+                pattern = self._convert_filter_operand(expr.expression)
+                return f"{left}.like({pattern})"
+
+            # Handle IN
+            if isinstance(expr, sqlglot.expressions.In):
+                left = self._convert_filter_operand(expr.this)
+                values = [self._convert_filter_operand(v) for v in expr.expressions]
+                return f"{left}.isin([{', '.join(values)}])"
+
+            # Handle IS NULL / IS NOT NULL
+            if isinstance(expr, sqlglot.expressions.Is):
+                left = self._convert_filter_operand(expr.this)
+                # Check if comparing to NULL
+                if isinstance(expr.expression, sqlglot.expressions.Null):
+                    return f"{left}.isNull()"
+                return f"({left} == {self._convert_filter_operand(expr.expression)})"
+
+            # Handle NOT
+            if isinstance(expr, sqlglot.expressions.Not):
+                inner = self._convert_expression_to_filter(expr.this)
+                # Special case: IS NULL becomes isNotNull()
+                if isinstance(expr.this, sqlglot.expressions.Is):
+                    left = self._convert_filter_operand(expr.this.this)
+                    if isinstance(expr.this.expression, sqlglot.expressions.Null):
+                        return f"{left}.isNotNull()"
+                return f"(~{inner})"
+
+            # Fallback
+            return f"col('{str(expr)}')"
+        except Exception as e:
+            self.logger.warning(f"Error converting filter expression: {str(e)}")
+            return f"col('{str(expr)}')"
+
+    def _convert_filter_operand(self, operand) -> str:
+        """Convert filter operand (column or literal)."""
+        try:
+            # Handle column references
+            if isinstance(operand, sqlglot.expressions.Column):
+                table = (
+                    operand.table
+                    if hasattr(operand, "table") and operand.table
+                    else None
+                )
+                column = operand.name if hasattr(operand, "name") else str(operand)
+                column = column.strip('"').strip("'")
+
+                if table:
+                    return f"col('{table}.{column}')"
+                else:
+                    return f"col('{column}')"
+
+            # Handle literals
+            if isinstance(operand, sqlglot.expressions.Literal):
+                value = operand.this
+                if operand.is_string:
+                    return f"lit('{value}')"
+                else:
+                    return f"lit({value})"
+
+            # Handle date arithmetic (NOW() - INTERVAL)
+            if isinstance(operand, sqlglot.expressions.Sub):
+                left_expr = operand.this
+                right = operand.expression
+
+                # Check if right side is an INTERVAL
+                if isinstance(right, sqlglot.expressions.Interval):
+                    interval_value = str(right.this).strip("'")
+                    interval_unit = (
+                        str(right.unit).upper() if hasattr(right, "unit") else "DAYS"
+                    )
+
+                    # Convert to PySpark date functions without using expr()
+                    if interval_unit in ["HOUR", "HOURS"]:
+                        return f"date_sub(current_timestamp(), {interval_value}/24)"
+                    elif interval_unit in ["DAY", "DAYS"]:
+                        return f"date_sub(current_date(), {interval_value})"
+                    else:
+                        # Fallback
+                        return f"current_timestamp()"
+
+                # Regular subtraction
+                left_val = self._convert_filter_operand(left_expr)
+                right_val = self._convert_filter_operand(right)
+                return f"({left_val} - {right_val})"
+
+            # Handle Anonymous functions (like NOW())
+            if isinstance(operand, sqlglot.expressions.Anonymous):
+                func_name = str(operand.this).upper()
+                if func_name in ["NOW", "CURRENT_TIMESTAMP"]:
+                    return "current_timestamp()"
+                elif func_name == "CURRENT_DATE":
+                    return "current_date()"
+
+            # Fallback
+            val_str = str(operand).strip('"').strip("'")
+            # Don't quote if it's a function call (contains parentheses)
+            if "(" in val_str and ")" in val_str:
+                return val_str
+            if not val_str.replace(".", "").replace("-", "").isdigit():
+                return f"'{val_str}'"
+            return val_str
+        except Exception:
+            return f"'{str(operand)}'"
 
     def _extract_group_by_clause(self, parsed_sql) -> Optional[str]:
         """Extract GROUP BY clause."""
@@ -727,7 +1096,65 @@ class SQLToPySparkConverter:
                 sqlglot.expressions.Group
             ):
                 group_expr = parsed_sql.find(sqlglot.expressions.Group)
-                columns = [f"col('{expr}')" for expr in group_expr.expressions]
+                columns = []
+
+                # Get SELECT expressions for resolving numeric references
+                select_exprs = []
+                if hasattr(parsed_sql, "find") and parsed_sql.find(
+                    sqlglot.expressions.Select
+                ):
+                    select_node = parsed_sql.find(sqlglot.expressions.Select)
+                    select_exprs = (
+                        select_node.expressions
+                        if hasattr(select_node, "expressions")
+                        else []
+                    )
+
+                for expr in group_expr.expressions:
+                    # Handle numeric references (GROUP BY 1, 2, etc.)
+                    if (
+                        isinstance(expr, sqlglot.expressions.Literal)
+                        and not expr.is_string
+                    ):
+                        try:
+                            idx = int(str(expr.this)) - 1  # SQL uses 1-based indexing
+                            if 0 <= idx < len(select_exprs):
+                                # Get the column from SELECT
+                                select_expr = select_exprs[idx]
+                                if isinstance(select_expr, sqlglot.expressions.Alias):
+                                    col_name = select_expr.alias
+                                elif isinstance(
+                                    select_expr, sqlglot.expressions.Column
+                                ):
+                                    col_name = (
+                                        select_expr.name
+                                        if hasattr(select_expr, "name")
+                                        else str(select_expr)
+                                    )
+                                else:
+                                    col_name = str(select_expr)
+                                col_name = col_name.strip('"').strip("'")
+                                columns.append(f"col('{col_name}')")
+                                continue
+                        except:
+                            pass
+
+                    if isinstance(expr, sqlglot.expressions.Column):
+                        table = (
+                            expr.table
+                            if hasattr(expr, "table") and expr.table
+                            else None
+                        )
+                        column = expr.name if hasattr(expr, "name") else str(expr)
+                        column = column.strip('"').strip("'")
+
+                        if table:
+                            columns.append(f"col('{table}.{column}')")
+                        else:
+                            columns.append(f"col('{column}')")
+                    else:
+                        col_str = str(expr).strip('"').strip("'")
+                        columns.append(f"col('{col_str}')")
                 return ", ".join(columns)
         except:
             pass
@@ -740,13 +1167,39 @@ class SQLToPySparkConverter:
                 sqlglot.expressions.Order
             ):
                 order_expr = parsed_sql.find(sqlglot.expressions.Order)
-                columns = []
+                order_cols = []
                 for expr in order_expr.expressions:
-                    if hasattr(expr, "desc") and expr.desc:
-                        columns.append(f"col('{expr.this}').desc()")
-                    else:
-                        columns.append(f"col('{expr.this}')")
-                return ", ".join(columns)
+                    if hasattr(expr, "this"):
+                        col_expr = expr.this
+                        if isinstance(col_expr, sqlglot.expressions.Column):
+                            table = (
+                                col_expr.table
+                                if hasattr(col_expr, "table") and col_expr.table
+                                else None
+                            )
+                            column = (
+                                col_expr.name
+                                if hasattr(col_expr, "name")
+                                else str(col_expr)
+                            )
+                            column = column.strip('"').strip("'")
+
+                            if table:
+                                col_ref = f"col('{table}.{column}')"
+                            else:
+                                col_ref = f"col('{column}')"
+                        else:
+                            col_str = str(col_expr).strip('"').strip("'")
+                            col_ref = f"col('{col_str}')"
+
+                        # Check for DESC
+                        if hasattr(expr, "args") and expr.args.get("desc"):
+                            col_ref += ".desc()"
+                        else:
+                            col_ref += ".asc()"
+
+                        order_cols.append(col_ref)
+                return ", ".join(order_cols)
         except:
             pass
         return None

@@ -35,27 +35,15 @@ data_source_analyzer = DataSourceAnalyzer()
 app = FastMCP("PySpark Tools")
 
 
-@app.tool()
-def convert_sql_to_pyspark(
+# Internal helper functions (not exposed as tools)
+def _convert_sql_to_pyspark_internal(
     sql_query: str,
     table_info: Optional[Dict] = None,
     dialect: Optional[str] = None,
     store_result: bool = True,
 ) -> Dict[str, Any]:
-    """
-    Convert SQL query to PySpark code with enhanced dialect support.
-
-    Args:
-        sql_query: The SQL query to convert
-        table_info: Optional table metadata for better optimization
-        dialect: Source SQL dialect (postgres, oracle, redshift, etc.)
-        store_result: Whether to store the result in memory
-
-    Returns:
-        Dictionary containing PySpark code, optimizations, and conversion metadata
-    """
+    """Internal conversion function without MCP decoration."""
     try:
-        # Check if we have a cached conversion
         cached = memory.get_conversion(sql_query)
         if cached:
             return {
@@ -74,10 +62,8 @@ def convert_sql_to_pyspark(
                 "fallback_used": False,
             }
 
-        # Convert SQL to PySpark with enhanced features
         result = converter.convert_sql_to_pyspark(sql_query, table_info, dialect)
 
-        # Store result if requested
         if store_result:
             memory.store_conversion(
                 sql_query=sql_query,
@@ -105,6 +91,123 @@ def convert_sql_to_pyspark(
             "sql_query": sql_query,
             "dialect": dialect,
         }
+
+
+def _optimize_pyspark_code_internal(
+    code: str, optimization_level: str = "standard"
+) -> Dict[str, Any]:
+    """Internal optimization function without MCP decoration."""
+    try:
+        result = advanced_optimizer.optimize(code, optimization_level)
+        return {
+            "status": "success",
+            "optimized_code": result.get("optimized_code", code),
+            "suggestions": result.get("suggestions", []),
+            "performance_impact": result.get("performance_impact", {}),
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "optimized_code": code,
+            "suggestions": [],
+        }
+
+
+def _review_pyspark_code_internal(
+    code: str, focus_areas: Optional[List[str]] = None
+) -> Dict[str, Any]:
+    """Internal review function without MCP decoration."""
+    try:
+        result = reviewer.review(code, focus_areas or [])
+        return {
+            "status": "success",
+            "issues": result.get("issues", []),
+            "summary": result.get("summary", {}),
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "issues": [],
+            "summary": {},
+        }
+
+
+def _analyze_sql_context_internal(sql_content: str) -> Dict[str, Any]:
+    """Internal context analysis function without MCP decoration."""
+    try:
+        schemas = set()
+        tables = set()
+        client_ids = []
+
+        schema_pattern = r'"?([a-zA-Z_][a-zA-Z0-9_]*)"?\."?([a-zA-Z_][a-zA-Z0-9_]*)"?'
+        matches = re.findall(schema_pattern, sql_content, re.IGNORECASE)
+        for schema, table in matches:
+            schemas.add(schema.lower())
+            tables.add(table.lower())
+
+        multi_tenant = bool(
+            re.search(r"_xx_|_\[xx\]_|\{client_id\}", sql_content, re.IGNORECASE)
+        )
+        if multi_tenant:
+            client_match = re.search(r"hops_(\d+)_", sql_content)
+            if client_match:
+                client_ids.append(client_match.group(1))
+
+        dialect = "postgres"
+        if "::" in sql_content or "now()" in sql_content.lower():
+            dialect = "postgres"
+        elif "GETDATE()" in sql_content.upper():
+            dialect = "tsql"
+
+        complexity_score = (
+            len(re.findall(r"\bJOIN\b", sql_content, re.IGNORECASE)) * 2
+            + len(re.findall(r"\bCASE\b", sql_content, re.IGNORECASE))
+            + len(re.findall(r"\bSUBSTRING\b", sql_content, re.IGNORECASE))
+            + len(re.findall(r"::bit|::int|::text", sql_content, re.IGNORECASE)) * 3
+        )
+
+        return {
+            "status": "success",
+            "schemas": list(schemas),
+            "tables": list(tables),
+            "client_ids": client_ids,
+            "multi_tenant_pattern": multi_tenant,
+            "dialect": dialect,
+            "complexity_score": complexity_score,
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "schemas": [],
+            "tables": [],
+        }
+
+
+@app.tool()
+def convert_sql_to_pyspark(
+    sql_query: str,
+    table_info: Optional[Dict] = None,
+    dialect: Optional[str] = None,
+    store_result: bool = True,
+) -> Dict[str, Any]:
+    """
+    Convert SQL query to PySpark code with enhanced dialect support.
+
+    Args:
+        sql_query: The SQL query to convert
+        table_info: Optional table metadata for better optimization
+        dialect: Source SQL dialect (postgres, oracle, redshift, etc.)
+        store_result: Whether to store the result in memory
+
+    Returns:
+        Dictionary containing PySpark code, optimizations, and conversion metadata
+    """
+    return _convert_sql_to_pyspark_internal(
+        sql_query, table_info, dialect, store_result
+    )
 
 
 @app.tool()
@@ -142,7 +245,7 @@ def complete_sql_conversion(
             }
 
         # 1. Auto-analyze SQL context
-        context_result = analyze_sql_context(sql_content)
+        context_result = _analyze_sql_context_internal(sql_content)
         if context_result["status"] != "success":
             return context_result
 
@@ -161,7 +264,7 @@ def complete_sql_conversion(
                     table_info[full_table_name] = {"size_gb": 1.0}  # Default estimate
 
         # 2. Convert with intelligent settings
-        conversion_result = convert_sql_to_pyspark(
+        conversion_result = _convert_sql_to_pyspark_internal(
             sql_query=sql_content,
             table_info=table_info,
             dialect=context.get("dialect", "postgres"),
@@ -172,13 +275,13 @@ def complete_sql_conversion(
             return conversion_result
 
         # 3. Auto-optimize based on detected patterns
-        optimization_result = optimize_pyspark_code(
+        optimization_result = _optimize_pyspark_code_internal(
             code=conversion_result["pyspark_code"],
             optimization_level=optimization_level,
         )
 
         # 4. Review for best practices
-        review_result = review_pyspark_code(
+        review_result = _review_pyspark_code_internal(
             code=optimization_result.get(
                 "optimized_code", conversion_result["pyspark_code"]
             ),
@@ -255,44 +358,51 @@ def analyze_sql_context(sql_content: str) -> Dict[str, Any]:
 
     No hardcoded references - works with any SQL content.
     """
+    return _analyze_sql_context_internal(sql_content)
+
+
+@app.tool()
+def convert_dataframe_to_dynamic_frame(
+    pyspark_code: str,
+    source_database: str,
+    source_table: str,
+    target_database: str,
+    target_table: str,
+) -> Dict[str, Any]:
+    """
+    Convert existing PySpark DataFrame code to use DynamicFrames.
+
+    Args:
+        pyspark_code: Existing PySpark DataFrame code
+        source_database: Source database name
+        source_table: Source table name
+        target_database: Target database name
+        target_table: Target table name
+
+    Returns:
+        Dictionary containing DynamicFrame-based code
+    """
     try:
-        if not sql_content.strip():
-            return {"status": "error", "message": "No SQL content provided"}
+        source_table_config = DataCatalogTable(
+            database_name=source_database,
+            table_name=source_table,
+        )
 
-        import re
+        target_table_config = DataCatalogTable(
+            database_name=target_database,
+            table_name=target_table,
+        )
 
-        # Detect SQL dialect
-        dialect = _detect_sql_dialect(sql_content)
+        result = aws_glue_integration.generate_dynamic_frame_conversion_template(
+            pyspark_code=pyspark_code,
+            source_table=source_table_config,
+            target_table=target_table_config,
+        )
 
-        # Extract schemas and tables dynamically
-        schemas = _extract_schemas_from_sql(sql_content)
-        tables = _extract_tables_from_sql(sql_content)
-
-        # Detect multi-tenant patterns
-        client_ids = _extract_client_ids_from_sql(sql_content)
-
-        # Calculate complexity
-        complexity = _calculate_sql_complexity(sql_content)
-
-        # Identify optimization opportunities
-        opportunities = _identify_optimization_opportunities(sql_content)
-
-        return {
-            "status": "success",
-            "dialect": dialect,
-            "schemas": schemas,
-            "tables": tables,
-            "client_ids": client_ids,
-            "complexity_score": complexity,
-            "multi_tenant_pattern": len(client_ids) > 0,
-            "optimization_opportunities": opportunities,
-            "estimated_conversion_time": (
-                "2-5 seconds" if complexity < 5 else "5-15 seconds"
-            ),
-        }
+        return result
 
     except Exception as e:
-        return {"status": "error", "message": f"Context analysis failed: {str(e)}"}
+        return {"status": "error", "message": str(e)}
 
 
 @app.tool()
@@ -1371,49 +1481,7 @@ def review_pyspark_code(
     Returns:
         Dictionary containing review results and suggestions
     """
-    try:
-        # Review the code
-        issues, metrics = reviewer.review_code(code)
-
-        # Filter by focus areas if specified
-        if focus_areas:
-            issues = [issue for issue in issues if issue.category in focus_areas]
-
-        # Generate report
-        report = reviewer.generate_report(issues, metrics)
-
-        # Store review in memory
-        memory.store_context(
-            f"review_{hash(code)}",
-            {
-                "code": code,
-                "issues": [issue.__dict__ for issue in issues],
-                "metrics": metrics,
-                "report": report,
-            },
-        )
-
-        return {
-            "status": "success",
-            "issues": [issue.__dict__ for issue in issues],
-            "metrics": metrics,
-            "report": report,
-            "summary": {
-                "total_issues": len(issues),
-                "critical_issues": len([i for i in issues if i.severity == "error"]),
-                "aws_glue_ready": len(
-                    [
-                        i
-                        for i in issues
-                        if i.category == "aws_glue" and i.severity == "error"
-                    ]
-                )
-                == 0,
-            },
-        }
-
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+    return _review_pyspark_code_internal(code, focus_areas)
 
 
 @app.tool()
@@ -1430,59 +1498,52 @@ def optimize_pyspark_code(
     Returns:
         Dictionary containing optimization suggestions and improved code
     """
+    return _optimize_pyspark_code_internal(code, optimization_level)
+
+
+@app.tool()
+def suggest_partitioning_strategy(
+    pyspark_code: str, table_info: Optional[Dict] = None
+) -> Dict[str, Any]:
+    """
+    Suggest optimal partitioning strategies based on query patterns.
+
+    Args:
+        pyspark_code: PySpark code to analyze
+        table_info: Optional table metadata
+
+    Returns:
+        Dictionary containing partitioning strategy recommendations
+    """
     try:
-        # Review code first to identify issues
-        issues, metrics = reviewer.review_code(code)
-
-        # Generate optimization suggestions based on level
-        optimizations = []
-
-        if optimization_level in ["basic", "standard", "aggressive"]:
-            # Performance optimizations
-            perf_issues = [i for i in issues if i.category == "performance"]
-            optimizations.extend([issue.suggestion for issue in perf_issues])
-
-        if optimization_level in ["standard", "aggressive"]:
-            # Best practice optimizations
-            bp_issues = [i for i in issues if i.category == "best_practice"]
-            optimizations.extend([issue.suggestion for issue in bp_issues])
-
-        if optimization_level == "aggressive":
-            # AWS Glue specific optimizations
-            glue_issues = [i for i in issues if i.category == "aws_glue"]
-            optimizations.extend([issue.suggestion for issue in glue_issues])
-
-            # Additional aggressive optimizations
-            optimizations.extend(
-                [
-                    "Consider using Delta Lake for ACID transactions",
-                    "Implement data partitioning strategy",
-                    "Use column-based file formats (Parquet)",
-                    "Implement proper error handling and logging",
-                    "Consider using Glue Data Catalog for metadata management",
-                ]
-            )
-
-        # Remove duplicates
-        optimizations = list(set(optimizations))
+        analysis = advanced_optimizer.analyze_data_flow(pyspark_code, table_info)
+        strategies = advanced_optimizer.suggest_partitioning_strategy(
+            analysis, table_info
+        )
 
         return {
             "status": "success",
-            "optimization_level": optimization_level,
-            "suggestions": optimizations,
-            "performance_score": max(0, 100 - (metrics["performance_issues"] * 10)),
-            "aws_glue_compatibility": len(
-                [
-                    i
-                    for i in issues
-                    if i.category == "aws_glue" and i.severity == "error"
-                ]
-            )
-            == 0,
+            "strategies": [
+                {
+                    "table_name": strategy.table_name,
+                    "partition_columns": strategy.partition_columns,
+                    "partition_type": strategy.partition_type,
+                    "estimated_partitions": strategy.estimated_partitions,
+                    "reasoning": strategy.reasoning,
+                    "performance_impact": strategy.performance_impact,
+                }
+                for strategy in strategies
+            ],
+            "total_strategies": len(strategies),
         }
-
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {
+            "status": "error",
+            "message": str(e),
+            "pyspark_code": (
+                pyspark_code[:200] + "..." if len(pyspark_code) > 200 else pyspark_code
+            ),
+        }
 
 
 @app.tool()

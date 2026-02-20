@@ -11,11 +11,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from flask import Flask, request, jsonify
 from pyspark_tools.sql_converter import SQLToPySparkConverter
-from pyspark_tools.code_reviewer import CodeReviewer
+from pyspark_tools.code_reviewer import PySparkCodeReviewer
 
 app = Flask(__name__)
 converter = SQLToPySparkConverter()
-reviewer = CodeReviewer()
+reviewer = PySparkCodeReviewer()
 
 SAMPLE_QUERIES = {
     "simple": """SELECT customer_id, SUM(amount) as total
