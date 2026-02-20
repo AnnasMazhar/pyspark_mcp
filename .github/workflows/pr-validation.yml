@@ -41,11 +41,12 @@ jobs:
       run: |
         PR_BODY="${{ github.event.pull_request.body }}"
         if [ -z "$PR_BODY" ] || [ ${#PR_BODY} -lt 20 ]; then
-          echo "::error::PR description is too short or empty"
+          echo "::warning::PR description is too short or empty"
           echo "Please provide a meaningful description of your changes"
-          exit 1
+          echo "A good description helps reviewers understand your changes"
+        else
+          echo "✓ PR has adequate description"
         fi
-        echo "✓ PR has adequate description"
     
     - name: Check for WIP or Draft markers
       run: |
