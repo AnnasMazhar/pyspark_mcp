@@ -32,6 +32,9 @@ pip install -e .
 
 # Install development tools
 pip install black isort flake8 pytest pytest-cov
+
+# Install git hooks (auto-format on push)
+bash .githooks/install.sh
 ```
 
 ### 3. Creating a Feature Branch

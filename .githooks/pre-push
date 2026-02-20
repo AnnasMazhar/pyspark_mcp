@@ -1,0 +1,46 @@
+#!/bin/bash
+# Pre-push hook to format code with black and isort
+
+echo "🔍 Running pre-push checks..."
+
+# Check if black is installed
+if ! command -v black &> /dev/null; then
+    echo "❌ black is not installed. Install it with: pip install black"
+    exit 1
+fi
+
+# Check if isort is installed
+if ! command -v isort &> /dev/null; then
+    echo "❌ isort is not installed. Install it with: pip install isort"
+    exit 1
+fi
+
+# Get list of Python files that are staged or modified
+PYTHON_FILES=$(git diff --name-only --cached --diff-filter=ACM | grep '\.py$')
+
+if [ -z "$PYTHON_FILES" ]; then
+    echo "✅ No Python files to format"
+    exit 0
+fi
+
+echo "📝 Formatting Python files with black..."
+black pyspark_tools tests 2>&1
+
+echo "📝 Sorting imports with isort..."
+isort pyspark_tools tests 2>&1
+
+# Check if any files were modified
+MODIFIED_FILES=$(git diff --name-only pyspark_tools tests | grep '\.py$')
+
+if [ -n "$MODIFIED_FILES" ]; then
+    echo ""
+    echo "✨ Files were formatted. Changes:"
+    echo "$MODIFIED_FILES"
+    echo ""
+    echo "📌 Adding formatted files to commit..."
+    git add pyspark_tools tests
+    echo "✅ Formatted files added to staging"
+fi
+
+echo "✅ Pre-push checks passed!"
+exit 0
