@@ -536,6 +536,10 @@ class SQLToPySparkConverter:
                 column = expr.name if hasattr(expr, "name") else str(expr)
                 column = column.strip('"').strip("'")
 
+                # Handle Oracle ROWNUM as special case
+                if dialect == "oracle" and column.lower() == "rownum":
+                    return "row_number().over(Window.orderBy(lit(1)))"
+
                 if table:
                     return f"col('{table}.{column}')"
                 else:
@@ -554,6 +558,237 @@ class SQLToPySparkConverter:
                     arg = self._convert_expression_to_pyspark(expr.this, dialect)
                     return f"count({arg})"
                 return "count('*')"
+
+            # Handle PostgreSQL string_agg / GROUP_CONCAT
+            if isinstance(expr, sqlglot.expressions.GroupConcat):
+                if hasattr(expr, "this") and expr.this:
+                    arg = self._convert_expression_to_pyspark(expr.this, dialect)
+                    return f"collect_list({arg})"
+                return "collect_list(col('*'))"
+
+            # Handle PostgreSQL array_agg
+            if isinstance(expr, sqlglot.expressions.ArrayAgg):
+                if hasattr(expr, "this") and expr.this:
+                    arg = self._convert_expression_to_pyspark(expr.this, dialect)
+                    return f"collect_list({arg})"
+                return "collect_list(col('*'))"
+
+            # Handle COALESCE (Oracle NVL, Redshift ISNULL)
+            if isinstance(expr, sqlglot.expressions.Coalesce):
+                if hasattr(expr, "expressions") and expr.expressions:
+                    args = [
+                        self._convert_expression_to_pyspark(arg, dialect)
+                        for arg in expr.expressions
+                    ]
+                    return f"coalesce({', '.join(args)})"
+                elif hasattr(expr, "this") and expr.this:
+                    arg = self._convert_expression_to_pyspark(expr.this, dialect)
+                    return f"coalesce({arg})"
+                return "coalesce()"
+
+            # Handle Oracle DECODE
+            if isinstance(
+                expr, (sqlglot.expressions.Decode, sqlglot.expressions.DecodeCase)
+            ):
+                # DECODE(col, val1, result1, val2, result2, ..., default)
+                if hasattr(expr, "this") and expr.this:
+                    col_expr = self._convert_expression_to_pyspark(expr.this, dialect)
+                elif hasattr(expr, "expression") and expr.expression:
+                    col_expr = self._convert_expression_to_pyspark(
+                        expr.expression, dialect
+                    )
+                else:
+                    return "lit(None)"
+
+                conditions = []
+                if hasattr(expr, "args") and "ifs" in expr.args:
+                    # DecodeCase has ifs structure like CASE
+                    for i, when_expr in enumerate(expr.args.get("ifs", [])):
+                        condition_val = self._convert_expression_to_pyspark(
+                            when_expr.this, dialect
+                        )
+                        result_val = self._convert_expression_to_pyspark(
+                            when_expr.args.get("true"), dialect
+                        )
+                        if i == 0:
+                            conditions.append(
+                                f"when({col_expr} == {condition_val}, {result_val})"
+                            )
+                        else:
+                            conditions.append(
+                                f".when({col_expr} == {condition_val}, {result_val})"
+                            )
+
+                    # Handle default
+                    if "default" in expr.args and expr.args["default"]:
+                        default_val = self._convert_expression_to_pyspark(
+                            expr.args["default"], dialect
+                        )
+                        conditions.append(f".otherwise({default_val})")
+
+                return (
+                    "".join(conditions)
+                    if conditions
+                    else f"when({col_expr} == {col_expr}, {col_expr})"
+                )
+
+            # Handle Redshift DATEADD (TsOrDsAdd)
+            if isinstance(expr, sqlglot.expressions.TsOrDsAdd):
+                # TsOrDsAdd(this=date_col, expression=value, unit=DAY)
+                if hasattr(expr, "this") and hasattr(expr, "expression"):
+                    date_expr = self._convert_expression_to_pyspark(expr.this, dialect)
+                    value_expr = self._convert_expression_to_pyspark(
+                        expr.expression, dialect
+                    )
+                    return f"date_add({date_expr}, {value_expr})"
+                return "current_date()"
+
+            # Handle Redshift DATEDIFF (TsOrDsDiff)
+            if isinstance(expr, sqlglot.expressions.TsOrDsDiff):
+                # TsOrDsDiff(this=end_date, expression=start_date, unit=DAY)
+                if hasattr(expr, "this") and hasattr(expr, "expression"):
+                    end_expr = self._convert_expression_to_pyspark(expr.this, dialect)
+                    start_expr = self._convert_expression_to_pyspark(
+                        expr.expression, dialect
+                    )
+                    return f"datediff({end_expr}, {start_expr})"
+                return "lit(0)"
+
+            # Handle dialect-specific functions (Anonymous functions)
+            if isinstance(expr, sqlglot.expressions.Anonymous):
+                func_name = str(expr.this).lower()
+
+                # Check if this function needs dialect-specific mapping
+                if (
+                    dialect in self.function_mappings
+                    and func_name in self.function_mappings[dialect]
+                ):
+                    pyspark_func = self.function_mappings[dialect][func_name]
+
+                    # Handle special cases with complex mappings
+                    if (
+                        func_name == "nvl"
+                        and hasattr(expr, "expressions")
+                        and len(expr.expressions) >= 2
+                    ):
+                        arg1 = self._convert_expression_to_pyspark(
+                            expr.expressions[0], dialect
+                        )
+                        arg2 = self._convert_expression_to_pyspark(
+                            expr.expressions[1], dialect
+                        )
+                        return f"coalesce({arg1}, {arg2})"
+
+                    elif (
+                        func_name == "decode"
+                        and hasattr(expr, "expressions")
+                        and len(expr.expressions) >= 3
+                    ):
+                        # Convert Oracle DECODE to CASE WHEN
+                        col_expr = self._convert_expression_to_pyspark(
+                            expr.expressions[0], dialect
+                        )
+                        conditions = []
+                        i = 1
+                        while i + 1 < len(expr.expressions):
+                            match_val = self._convert_expression_to_pyspark(
+                                expr.expressions[i], dialect
+                            )
+                            result_val = self._convert_expression_to_pyspark(
+                                expr.expressions[i + 1], dialect
+                            )
+                            if i == 1:
+                                conditions.append(
+                                    f"when({col_expr} == {match_val}, {result_val})"
+                                )
+                            else:
+                                conditions.append(
+                                    f".when({col_expr} == {match_val}, {result_val})"
+                                )
+                            i += 2
+                        # Handle default value if odd number of args
+                        if i < len(expr.expressions):
+                            default_val = self._convert_expression_to_pyspark(
+                                expr.expressions[i], dialect
+                            )
+                            conditions.append(f".otherwise({default_val})")
+                        return "".join(conditions)
+
+                    elif func_name in ["string_agg", "array_agg", "group_concat"]:
+                        # These aggregate functions map to collect_list
+                        if hasattr(expr, "expressions") and expr.expressions:
+                            arg = self._convert_expression_to_pyspark(
+                                expr.expressions[0], dialect
+                            )
+                            return f"collect_list({arg})"
+                        return "collect_list(col('*'))"
+
+                    elif (
+                        func_name == "dateadd"
+                        and hasattr(expr, "expressions")
+                        and len(expr.expressions) >= 3
+                    ):
+                        # Redshift DATEADD(unit, value, date)
+                        # Convert to date_add(date, value) - assuming days for now
+                        date_expr = self._convert_expression_to_pyspark(
+                            expr.expressions[2], dialect
+                        )
+                        value_expr = self._convert_expression_to_pyspark(
+                            expr.expressions[1], dialect
+                        )
+                        return f"date_add({date_expr}, {value_expr})"
+
+                    elif (
+                        func_name == "datediff"
+                        and hasattr(expr, "expressions")
+                        and len(expr.expressions) >= 3
+                    ):
+                        # Redshift DATEDIFF(unit, start, end)
+                        # Convert to datediff(end, start)
+                        start_expr = self._convert_expression_to_pyspark(
+                            expr.expressions[1], dialect
+                        )
+                        end_expr = self._convert_expression_to_pyspark(
+                            expr.expressions[2], dialect
+                        )
+                        return f"datediff({end_expr}, {start_expr})"
+
+                    elif (
+                        func_name == "isnull"
+                        and hasattr(expr, "expressions")
+                        and len(expr.expressions) >= 2
+                    ):
+                        # Redshift ISNULL(expr, replacement)
+                        arg1 = self._convert_expression_to_pyspark(
+                            expr.expressions[0], dialect
+                        )
+                        arg2 = self._convert_expression_to_pyspark(
+                            expr.expressions[1], dialect
+                        )
+                        return f"coalesce({arg1}, {arg2})"
+
+                    elif func_name == "rownum":
+                        # Oracle ROWNUM - convert to row_number()
+                        return "row_number().over(Window.orderBy(lit(1)))"
+
+                    else:
+                        # Simple function name mapping
+                        if hasattr(expr, "expressions") and expr.expressions:
+                            args = [
+                                self._convert_expression_to_pyspark(arg, dialect)
+                                for arg in expr.expressions
+                            ]
+                            return f"{pyspark_func}({', '.join(args)})"
+                        return f"{pyspark_func}()"
+
+                # No mapping found, use function as-is
+                if hasattr(expr, "expressions") and expr.expressions:
+                    args = [
+                        self._convert_expression_to_pyspark(arg, dialect)
+                        for arg in expr.expressions
+                    ]
+                    return f"{func_name}({', '.join(args)})"
+                return f"{func_name}()"
 
             # Handle other common functions
             expr_type = type(expr).__name__
