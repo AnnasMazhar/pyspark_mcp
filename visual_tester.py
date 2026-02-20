@@ -294,11 +294,15 @@ def convert():
         
         # Convert SQL to PySpark
         result = converter.convert_sql_to_pyspark(sql)
-        pyspark_code = result.get('pyspark_code', '')
+        pyspark_code = result.pyspark_code if hasattr(result, 'pyspark_code') else str(result)
         
         # Get optimizations
         opt_result = optimizer.analyze_and_optimize(pyspark_code)
-        optimizations = opt_result.get('optimizations', [])
+        optimizations = []
+        if hasattr(opt_result, 'optimizations'):
+            optimizations = opt_result.optimizations
+        elif isinstance(opt_result, dict):
+            optimizations = opt_result.get('optimizations', [])
         
         # Calculate complexity
         complexity = 'Low'
@@ -309,12 +313,12 @@ def convert():
         
         return jsonify({
             'pyspark_code': pyspark_code,
-            'optimizations': optimizations[:5],  # Top 5
+            'optimizations': optimizations[:5] if optimizations else [],
             'complexity': complexity
         })
         
     except Exception as e:
-        return jsonify({'error': str(e), 'traceback': traceback.format_exc()}), 400
+        return jsonify({'error': str(e)}), 400
 
 def render_template_string(template, **context):
     """Simple template renderer"""
