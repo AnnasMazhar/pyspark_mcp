@@ -9,14 +9,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, request, jsonify
 from pyspark_tools.sql_converter import SQLToPySparkConverter
-from pyspark_tools.advanced_optimizer import AdvancedOptimizer
-import traceback
+from pyspark_tools.code_reviewer import CodeReviewer
 
 app = Flask(__name__)
 converter = SQLToPySparkConverter()
-optimizer = AdvancedOptimizer()
+reviewer = CodeReviewer()
 
 SAMPLE_QUERIES = {
     "simple": """SELECT customer_id, SUM(amount) as total
@@ -291,18 +290,33 @@ def convert():
     try:
         data = request.json
         sql = data.get('sql', '')
+        dialect = data.get('dialect', None)
         
-        # Convert SQL to PySpark
-        result = converter.convert_sql_to_pyspark(sql)
-        pyspark_code = result.pyspark_code if hasattr(result, 'pyspark_code') else str(result)
+        # Convert SQL to PySpark using actual converter
+        result = converter.convert_sql_to_pyspark(sql, table_info=None, dialect=dialect)
         
-        # Get optimizations
-        opt_result = optimizer.analyze_and_optimize(pyspark_code)
+        # Extract PySpark code
+        pyspark_code = result.pyspark_code
+        
+        # Get optimizations from conversion result
         optimizations = []
-        if hasattr(opt_result, 'optimizations'):
-            optimizations = opt_result.optimizations
-        elif isinstance(opt_result, dict):
-            optimizations = opt_result.get('optimizations', [])
+        if hasattr(result, 'optimizations') and result.optimizations:
+            for opt in result.optimizations[:5]:
+                optimizations.append({
+                    'type': 'OPTIMIZATION',
+                    'title': 'Conversion Suggestion',
+                    'description': opt
+                })
+        
+        # Review code for additional suggestions
+        issues, metrics = reviewer.review_code(pyspark_code)
+        perf_issues = [i for i in issues if i.category == "performance"][:3]
+        for issue in perf_issues:
+            optimizations.append({
+                'type': 'PERFORMANCE',
+                'title': issue.message,
+                'description': issue.suggestion
+            })
         
         # Calculate complexity
         complexity = 'Low'
@@ -313,8 +327,10 @@ def convert():
         
         return jsonify({
             'pyspark_code': pyspark_code,
-            'optimizations': optimizations[:5] if optimizations else [],
-            'complexity': complexity
+            'optimizations': optimizations[:5],
+            'complexity': complexity,
+            'dialect': result.dialect_used if hasattr(result, 'dialect_used') else 'spark',
+            'warnings': result.warnings if hasattr(result, 'warnings') else []
         })
         
     except Exception as e:
