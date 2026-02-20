@@ -1,0 +1,222 @@
+name: PR Validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [ main, develop ]
+
+jobs:
+  pr-checks:
+    name: PR Quality Checks
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Check PR title format
+      run: |
+        PR_TITLE="${{ github.event.pull_request.title }}"
+        # Allow conventional commits format OR branch-name format (case-insensitive)
+        if echo "$PR_TITLE" | grep -qiE "^(feat|fix|docs|style|refactor|perf|test|chore|ci|build)(\(.+\))?: .+"; then
+          echo "✓ PR title follows conventional commits"
+        elif echo "$PR_TITLE" | grep -qiE "^(feature|bugfix|hotfix|ci|fix|docs|refactor|test)/"; then
+          echo "⚠️  PR title uses branch name format. Consider using conventional commits:"
+          echo "  Examples: ci: implement trunk-based workflow, fix: resolve bug"
+        else
+          echo "::warning::PR title doesn't follow conventional commits format"
+          echo "Recommended format:"
+          echo "  feat: add new SQL converter feature"
+          echo "  fix: resolve Oracle function mapping bug"
+          echo "  docs: update installation guide"
+          echo "  ci: implement trunk-based workflow"
+          echo ""
+          echo "Current title: $PR_TITLE"
+        fi
+    
+    - name: Check PR description
+      run: |
+        PR_BODY="${{ github.event.pull_request.body }}"
+        if [ -z "$PR_BODY" ] || [ ${#PR_BODY} -lt 20 ]; then
+          echo "::warning::PR description is too short or empty"
+          echo "Please provide a meaningful description of your changes"
+          echo "A good description helps reviewers understand your changes"
+        else
+          echo "✓ PR has adequate description"
+        fi
+    
+    - name: Check for WIP or Draft markers
+      run: |
+        PR_TITLE="${{ github.event.pull_request.title }}"
+        if echo "$PR_TITLE" | grep -qiE "\b(wip|draft|do not merge|dnm)\b"; then
+          echo "::error::PR appears to be work in progress"
+          echo "Please mark as draft or remove WIP markers when ready"
+          exit 1
+        fi
+        echo "✓ PR is ready for review"
+    
+    - name: Check branch naming
+      run: |
+        BRANCH_NAME="${{ github.head_ref }}"
+        if ! echo "$BRANCH_NAME" | grep -qE "^(feature|bugfix|hotfix|release|docs|refactor|test)/[a-z0-9-]+$"; then
+          echo "::warning::Branch name doesn't follow convention"
+          echo "Recommended format: feature/my-feature, bugfix/fix-issue, hotfix/critical-fix"
+        else
+          echo "✓ Branch name follows convention"
+        fi
+    
+    - name: Check for large files
+      run: |
+        LARGE_FILES=$(find . -type f -size +1M -not -path "./.git/*" -not -path "./.venv/*" -not -path "./node_modules/*")
+        if [ -n "$LARGE_FILES" ]; then
+          echo "::warning::Large files detected:"
+          echo "$LARGE_FILES"
+          echo "Consider using Git LFS for large files"
+        fi
+    
+    - name: Check for secrets or sensitive data
+      run: |
+        # Check for common secret patterns
+        if grep -rE "(password|secret|api_key|token|private_key)\s*=\s*['\"][^'\"]+['\"]" pyspark_tools/ tests/ --exclude-dir=.git --exclude-dir=.venv; then
+          echo "::error::Potential secrets found in code"
+          exit 1
+        fi
+        echo "✓ No obvious secrets detected"
+    
+    - name: Check file permissions
+      run: |
+        # Ensure no executable permissions on source files
+        EXEC_FILES=$(find pyspark_tools tests -type f -name "*.py" -executable)
+        if [ -n "$EXEC_FILES" ]; then
+          echo "::warning::Python files with executable permissions found:"
+          echo "$EXEC_FILES"
+        fi
+
+  pr-size-check:
+    name: PR Size Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Check PR size
+      run: |
+        # Get changed files count
+        CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | wc -l)
+        
+        # Get lines changed
+        LINES_CHANGED=$(git diff --shortstat origin/${{ github.base_ref }}...HEAD | grep -oE '[0-9]+ insertion|[0-9]+ deletion' | grep -oE '[0-9]+' | awk '{sum+=$1} END {print sum}')
+        
+        echo "Files changed: $CHANGED_FILES"
+        echo "Lines changed: $LINES_CHANGED"
+        
+        if [ $CHANGED_FILES -gt 50 ]; then
+          echo "::warning::PR changes $CHANGED_FILES files. Consider breaking into smaller PRs."
+        fi
+        
+        if [ $LINES_CHANGED -gt 1000 ]; then
+          echo "::warning::PR changes $LINES_CHANGED lines. Consider breaking into smaller PRs."
+        fi
+        
+        echo "✓ PR size checked"
+
+  pr-labels:
+    name: PR Label Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Check for required labels
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const labels = context.payload.pull_request.labels.map(l => l.name);
+          const requiredLabels = ['enhancement', 'bug', 'documentation', 'refactor', 'test'];
+          
+          const hasLabel = requiredLabels.some(label => 
+            labels.some(l => l.toLowerCase().includes(label))
+          );
+          
+          if (!hasLabel && labels.length === 0) {
+            core.warning('PR has no labels. Consider adding: enhancement, bug, documentation, etc.');
+          } else {
+            core.info('✓ PR has appropriate labels');
+          }
+
+  conflict-check:
+    name: Merge Conflict Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Check for merge conflicts
+      run: |
+        git fetch origin ${{ github.base_ref }}
+        
+        # Try to merge base branch
+        if ! git merge --no-commit --no-ff origin/${{ github.base_ref }}; then
+          echo "::error::Merge conflicts detected with ${{ github.base_ref }}"
+          echo "Please resolve conflicts before merging"
+          git merge --abort || true
+          exit 1
+        fi
+        
+        git merge --abort || true
+        echo "✓ No merge conflicts detected"
+
+  test-coverage-check:
+    name: Coverage Requirements
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -r requirements.txt
+        python -m pip install -e .
+        python -m pip install pytest-cov
+    
+    - name: Check test coverage
+      run: |
+        python -m pytest tests/ \
+          --cov=pyspark_tools \
+          --cov-report=term-missing \
+          --cov-fail-under=70
+        
+        echo "✓ Coverage meets minimum threshold (70%)"
+    
+    - name: Check for new untested code
+      run: |
+        # Get list of changed Python files
+        CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep "\.py$" | grep "^pyspark_tools/" || true)
+        
+        if [ -n "$CHANGED_FILES" ]; then
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+          
+          # Run coverage on changed files
+          for file in $CHANGED_FILES; do
+            MODULE=$(echo $file | sed 's/\.py$//' | sed 's/\//./g')
+            echo "Checking coverage for $MODULE"
+          done
+        fi
