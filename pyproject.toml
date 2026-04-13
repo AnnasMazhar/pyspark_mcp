@@ -9,7 +9,7 @@ description = "FastMCP server for SQL to PySpark conversion with batch processin
 authors = [{name = "Dev", email = "dev@example.com"}]
 requires-python = ">=3.10"
 dependencies = [
-    "fastmcp>=0.3.0",
+    "fastmcp>=3.2.3",
     "sqlglot>=25.0",
     "pyspark>=3.5.0,<4.0.0",
     "sqlite-utils>=3.36",
