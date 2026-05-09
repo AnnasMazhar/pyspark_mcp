@@ -3,7 +3,7 @@
 Entry point for the PySpark Tools MCP Server.
 
 This script starts the FastMCP server for SQL to PySpark conversion
-with all 49 tools available for use.
+with 14 consolidated tools (router pattern) for LLM context efficiency.
 """
 
 import sys
