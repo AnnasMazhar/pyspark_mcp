@@ -1,6 +1,6 @@
 # PySpark MCP Server
 
-<!-- mcp-name: io.github.AnnasMazhar/pyspark-mcp -->
+
 
 SQL migration assistance, AWS Glue job generation, and Spark code optimization — as an MCP server.
 
@@ -131,3 +131,7 @@ pyspark_tools/
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+---
+`mcp-name: io.github.AnnasMazhar/pyspark-mcp`
+
