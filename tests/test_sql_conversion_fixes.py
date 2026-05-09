@@ -1,3 +1,4 @@
+import os
 """
 Test suite for SQL to PySpark conversion fixes
 Tests all the issues found and fixed during development

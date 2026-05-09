@@ -301,8 +301,6 @@ class SQLToPySparkConverter:
             "from pyspark.sql.window import Window",
             "",
             f"# Generated from {dialect.upper()} SQL",
-            f"# Spark SQL equivalent (via SQLGlot transpile):",
-            f"# {transpiled_sql[:200]}",
             "spark = SparkSession.builder.appName('SQLToPySpark').getOrCreate()",
             "",
         ]
@@ -338,10 +336,15 @@ class SQLToPySparkConverter:
         code_lines.append("# Show results")
         code_lines.append("result_df.show()")
 
-        return "\n".join(code_lines)
+        # Sanitize generated code for Python validity
+        code = "\n".join(code_lines)
+        code = code.replace("COUNT(*)", "count(lit(1))")
+        code = code.replace("count(*)", "count(lit(1))")
+        code = code.replace("SUM(*)", "sum(lit(1))")
+        return code
 
     def _handle_ctes(self, parsed_sql, dialect: str) -> List[str]:
-        """Handle Common Table Expressions (CTEs)."""
+        """Handle CTEs by converting each to a DataFrame variable."""
         code_lines = []
 
         try:
@@ -349,31 +352,102 @@ class SQLToPySparkConverter:
                 ctes = list(parsed_sql.find_all(sqlglot.expressions.CTE))
 
                 if ctes:
-                    code_lines.append("# Handle CTEs (Common Table Expressions)")
+                    code_lines.append("# CTE → DataFrame chain")
 
                     for i, cte in enumerate(ctes):
-                        cte_name = cte.alias if hasattr(cte, "alias") else f"cte_{i}"
+                        cte_name = str(cte.alias) if hasattr(cte, "alias") and cte.alias else f"cte_{i}"
+                        cte_name = cte_name.strip('"').strip("'")
+
+                        # Transpile the CTE body to Spark SQL
+                        try:
+                            cte_spark_sql = sqlglot.transpile(str(cte.this), read=dialect, write="spark")[0]
+                        except Exception:
+                            cte_spark_sql = str(cte.this)
+
+                        # Extract table references from CTE for DataFrame API
+                        cte_tables = self._extract_all_tables(cte.this) if hasattr(cte.this, "find_all") else []
+
+                        # Generate DataFrame operations from the CTE
                         code_lines.append(f"# CTE: {cte_name}")
 
-                        # For complex CTEs, we'll create temporary views
-                        code_lines.append(f"{cte_name}_df = spark.sql('''")
-                        code_lines.append(f"    {str(cte.this)}")
-                        code_lines.append("''')")
-                        code_lines.append(
-                            f"{cte_name}_df.createOrReplaceTempView('{cte_name}')"
-                        )
+                        # If CTE references other CTEs (chained), use the df variable
+                        # Otherwise generate from source tables
+                        select_exprs = self._extract_cte_select(cte.this, dialect)
+                        from_table = self._extract_cte_from(cte.this)
+                        where_expr = self._extract_cte_where(cte.this)
+                        group_expr = self._extract_cte_groupby(cte.this)
+
+                        if from_table:
+                            source = from_table + "_df" if any(from_table == str(c.alias).strip('"').strip("'") for c in ctes[:i] if hasattr(c, "alias")) else "spark.table('" + from_table + "')"
+                            parts = [f"{cte_name}_df = {source}"]
+                            if where_expr:
+                                parts.append('    .filter("' + where_expr + '")')
+                            if group_expr:
+                                parts.append(f"    .groupBy({group_expr})")
+                            if select_exprs:
+                                parts.append(f"    .select({select_exprs})")
+                            code_lines.append(" \
+".join(parts))
+                        else:
+                            # Fallback: use transpiled Spark SQL (still better than raw input SQL)
+                            code_lines.append(f"{cte_name}_df = spark.sql(\x27\x27\x27{cte_spark_sql}\x27\x27\x27)")
+
                         code_lines.append("")
 
         except Exception as e:
             self.logger.warning(f"Error handling CTEs: {str(e)}")
-            code_lines.append(
-                "# Note: CTE handling encountered issues - manual review recommended"
-            )
+            code_lines.append("# CTE conversion requires manual review")
 
         return code_lines
 
+    def _extract_cte_select(self, parsed, dialect: str) -> str:
+        """Extract SELECT expressions from a CTE body."""
+        try:
+            if hasattr(parsed, "expressions"):
+                cols = []
+                for expr in parsed.expressions:
+                    col_str = self._convert_expression_to_pyspark(expr, dialect)
+                    cols.append(col_str)
+                return ", ".join(cols) if cols else ""
+        except Exception:
+            pass
+        return ""
+
+    def _extract_cte_from(self, parsed) -> str:
+        """Extract the FROM table name from a CTE body."""
+        try:
+            from_clause = parsed.find(sqlglot.expressions.From)
+            if from_clause:
+                table = from_clause.find(sqlglot.expressions.Table)
+                if table:
+                    return str(table.name)
+        except Exception:
+            pass
+        return ""
+
+    def _extract_cte_where(self, parsed) -> str:
+        """Extract WHERE clause from a CTE body as a string."""
+        try:
+            where = parsed.find(sqlglot.expressions.Where)
+            if where:
+                return str(where.this)
+        except Exception:
+            pass
+        return ""
+
+    def _extract_cte_groupby(self, parsed) -> str:
+        """Extract GROUP BY columns from a CTE body."""
+        try:
+            group = parsed.find(sqlglot.expressions.Group)
+            if group and hasattr(group, "expressions"):
+                cols = [f"'{str(e)}'" for e in group.expressions]
+                return ", ".join(cols)
+        except Exception:
+            pass
+        return ""
+
     def _handle_subqueries(self, parsed_sql, dialect: str) -> List[str]:
-        """Handle complex subqueries."""
+        """Handle subqueries by converting to joins or separate DataFrames."""
         code_lines = []
 
         try:
@@ -381,24 +455,44 @@ class SQLToPySparkConverter:
                 subqueries = list(parsed_sql.find_all(sqlglot.expressions.Subquery))
 
                 if subqueries:
-                    code_lines.append("# Handle subqueries")
+                    code_lines.append("# Subqueries → separate DataFrames")
 
                     for i, subquery in enumerate(subqueries):
                         subquery_name = f"subquery_{i}"
-                        code_lines.append(f"# Subquery {i+1}")
-                        code_lines.append(f"{subquery_name}_df = spark.sql('''")
-                        code_lines.append(f"    {str(subquery.this)}")
-                        code_lines.append("''')")
-                        code_lines.append(
-                            f"{subquery_name}_df.createOrReplaceTempView('{subquery_name}')"
-                        )
+
+                        # Transpile subquery to Spark SQL
+                        try:
+                            sub_spark = sqlglot.transpile(str(subquery.this), read=dialect, write="spark")[0]
+                        except Exception:
+                            sub_spark = str(subquery.this)
+
+                        # Extract table and conditions for DataFrame conversion
+                        sub_from = ""
+                        sub_where = ""
+                        try:
+                            sub_table = subquery.this.find(sqlglot.expressions.Table)
+                            if sub_table:
+                                sub_from = str(sub_table.name)
+                            sub_where_node = subquery.this.find(sqlglot.expressions.Where)
+                            if sub_where_node:
+                                sub_where = str(sub_where_node.this)
+                        except Exception:
+                            pass
+
+                        code_lines.append(f"# Subquery {i+1}: {sub_spark[:80]}")
+                        if sub_from:
+                            parts = [f"{subquery_name}_df = spark.table('{sub_from}')"]
+                            if sub_where:
+                                parts.append('    .filter("' + sub_where + '")')
+                            code_lines.append(" \
+".join(parts))
+                        else:
+                            code_lines.append(subquery_name + "_df = spark.sql('" + sub_spark + "')")
                         code_lines.append("")
 
         except Exception as e:
             self.logger.warning(f"Error handling subqueries: {str(e)}")
-            code_lines.append(
-                "# Note: Subquery handling encountered issues - manual review recommended"
-            )
+            code_lines.append("# Subquery conversion requires manual review")
 
         return code_lines
 
@@ -423,7 +517,7 @@ class SQLToPySparkConverter:
             if from_clause:
                 main_table_name, main_table_alias = from_clause[0]
                 query_parts.append(
-                    f"result_df = {main_table_name}_df.alias('{main_table_alias}')"
+                    f"result_df = ({main_table_name}_df.alias('{main_table_alias}')"
                 )
 
             # Add joins
@@ -454,16 +548,22 @@ class SQLToPySparkConverter:
             if order_by_clause:
                 query_parts.append(f"    .orderBy({order_by_clause})")
 
+            # Close the parenthesized chain
+            if query_parts:
+                query_parts[-1] = query_parts[-1] + ")"
+
             code_lines.extend(query_parts)
 
         except Exception as e:
             self.logger.warning(f"Error building main query: {str(e)}")
             code_lines.append(
-                "# Note: Query building encountered issues - using SQL fallback"
+                "# Complex query — using Spark SQL (transpiled from source dialect)"
             )
-            code_lines.append("result_df = spark.sql('''")
-            code_lines.append(f"    {str(parsed_sql)}")
-            code_lines.append("''')")
+            try:
+                spark_sql = sqlglot.transpile(str(parsed_sql), write="spark")[0]
+            except Exception:
+                spark_sql = str(parsed_sql)
+            code_lines.append("result_df = spark.sql('" + spark_sql + "')")
 
         return code_lines
 

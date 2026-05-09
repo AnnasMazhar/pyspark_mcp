@@ -1,6 +1,7 @@
 """FastMCP server for SQL to PySpark conversion with code review and optimization."""
 
 import json
+import os
 import re
 from typing import Any, Dict, List, Optional, Union
 
@@ -22,7 +23,7 @@ from .memory_manager import MemoryManager
 from .sql_converter import SQLToPySparkConverter
 
 # Initialize components
-memory = MemoryManager() if os.environ.get("PYSPARK_MCP_CACHE") else None
+memory = MemoryManager()  # Always initialize (lightweight SQLite)
 converter = SQLToPySparkConverter()
 reviewer = PySparkCodeReviewer()
 batch_processor = BatchProcessor(memory, converter)

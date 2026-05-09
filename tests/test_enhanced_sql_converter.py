@@ -270,3 +270,80 @@ class TestEnhancedSQLConverter:
         assert "broadcast" in opt_text or "join" in opt_text
         assert "partition" in opt_text or "cache" in opt_text
         assert "column pruning" in opt_text or "predicate pushdown" in opt_text
+
+
+class TestGeneratedCodeValidity:
+    """P0 gate: all generated code must be syntactically valid Python."""
+
+    def setup_method(self):
+        self.converter = SQLToPySparkConverter()
+
+    def _assert_valid_python(self, code: str, query_name: str):
+        """Assert generated code parses as valid Python."""
+        import ast
+        try:
+            ast.parse(code)
+        except SyntaxError as e:
+            # Print the problematic code for debugging
+            lines = code.split('\n')
+            context = lines[max(0, e.lineno-3):e.lineno+2] if e.lineno else lines[:10]
+            raise AssertionError(
+                f"Generated code for '{query_name}' has SyntaxError at line {e.lineno}:\n"
+                f"  {e.msg}\n"
+                f"  Context:\n" + "\n".join(f"    {l}" for l in context)
+            )
+
+    def test_simple_select_valid_python(self):
+        result = self.converter.convert_sql_to_pyspark("SELECT id, name FROM users WHERE active = 1")
+        self._assert_valid_python(result.pyspark_code, "simple_select")
+
+    def test_multi_join_valid_python(self):
+        sql = """
+        SELECT u.name, o.amount, p.name
+        FROM users u
+        JOIN orders o ON u.id = o.user_id
+        JOIN products p ON o.product_id = p.id
+        WHERE u.active = 1
+        """
+        result = self.converter.convert_sql_to_pyspark(sql)
+        self._assert_valid_python(result.pyspark_code, "multi_join")
+
+    def test_cte_valid_python(self):
+        sql = """
+        WITH user_stats AS (
+            SELECT user_id, COUNT(*) as order_count
+            FROM orders GROUP BY user_id
+        )
+        SELECT * FROM user_stats WHERE order_count > 5
+        """
+        result = self.converter.convert_sql_to_pyspark(sql)
+        self._assert_valid_python(result.pyspark_code, "cte")
+
+    def test_window_function_valid_python(self):
+        sql = """
+        SELECT name, salary,
+            ROW_NUMBER() OVER (PARTITION BY dept ORDER BY salary DESC) as rank
+        FROM employees
+        """
+        result = self.converter.convert_sql_to_pyspark(sql)
+        self._assert_valid_python(result.pyspark_code, "window_function")
+
+    def test_group_by_having_valid_python(self):
+        sql = """
+        SELECT department, COUNT(*) as cnt, AVG(salary) as avg_sal
+        FROM employees
+        GROUP BY department
+        HAVING COUNT(*) > 5
+        """
+        result = self.converter.convert_sql_to_pyspark(sql)
+        self._assert_valid_python(result.pyspark_code, "group_by_having")
+
+    def test_composite_join_valid_python(self):
+        sql = """
+        SELECT m.id, MAX(f.processed_time)
+        FROM messages m
+        JOIN frames f ON m.id = f.msg_id AND m.orig_id = f.sealer_id
+        GROUP BY m.id
+        """
+        result = self.converter.convert_sql_to_pyspark(sql)
+        self._assert_valid_python(result.pyspark_code, "composite_join")
