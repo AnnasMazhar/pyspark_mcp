@@ -44,9 +44,7 @@ from pyspark_tools.memory_manager import (
 )
 
 # Import resource management
-from pyspark_tools.resource_manager import (
     ResourceManager,
-    get_resource_manager,
     managed_connection,
     managed_temp_dir,
     managed_temp_file,
@@ -66,7 +64,6 @@ _cache_lock = threading.Lock()
 
 
 @pytest.fixture
-def resource_manager() -> Generator[ResourceManager, None, None]:
     """Provide a resource manager instance for tests with automatic cleanup."""
     manager = ResourceManager()
     yield manager
@@ -81,7 +78,6 @@ def resource_manager() -> Generator[ResourceManager, None, None]:
 
 
 @pytest.fixture
-def temp_dir(resource_manager: ResourceManager) -> Generator[Path, None, None]:
     """Create a temporary directory for test data with resource management."""
     with managed_temp_dir(prefix="pyspark_tools_test_") as temp_path:
         yield temp_path
@@ -191,7 +187,6 @@ def sample_pdf_files(test_data_dir: Path) -> Dict[str, Path]:
 @pytest.fixture
 def temp_db_path(
     tmp_path: Path,
-    resource_manager: ResourceManager,
 ) -> Generator[Path, None, None]:
     """Provide a temporary database path for testing."""
     db_path = tmp_path / f"test_{os.getpid()}_{threading.get_ident()}.sqlite"
@@ -200,7 +195,6 @@ def temp_db_path(
     if db_path.exists():
         db_path.unlink()
 
-    resource_id = resource_manager.register_temp_file(
         db_path, f"Test database {db_path.name}"
     )
 
@@ -213,7 +207,6 @@ def temp_db_path(
     try:
         yield db_path
     finally:
-        # Cleanup is handled by resource_manager fixture teardown
         pass
 
 
@@ -503,7 +496,6 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(
                 pytest.mark.sequential_only
             )  # Integration tests may conflict
-        elif "test_resource_manager" in item.fspath.basename:
             item.add_marker(pytest.mark.sequential_only)  # Resource management tests
 
         # Add integration marker for integration tests

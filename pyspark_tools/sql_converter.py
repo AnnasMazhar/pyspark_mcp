@@ -106,6 +106,12 @@ class SQLToPySparkConverter:
         # Normalize dialect name
         dialect = self.supported_dialects.get(dialect.lower(), "spark")
 
+        # Primary path: use SQLGlot transpile for accurate dialect conversion
+        try:
+            transpiled_sql = sqlglot.transpile(sql, read=dialect, write="spark")[0]
+        except Exception:
+            transpiled_sql = sql  # Fall through to parsing
+
         try:
             # Parse SQL using detected/specified dialect
             parsed = sqlglot.parse_one(sql, dialect=dialect)
@@ -295,6 +301,8 @@ class SQLToPySparkConverter:
             "from pyspark.sql.window import Window",
             "",
             f"# Generated from {dialect.upper()} SQL",
+            f"# Spark SQL equivalent (via SQLGlot transpile):",
+            f"# {transpiled_sql[:200]}",
             "spark = SparkSession.builder.appName('SQLToPySpark').getOrCreate()",
             "",
         ]

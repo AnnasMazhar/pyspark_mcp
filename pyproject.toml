@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pyspark-tools"
 version = "1.0.0"
-description = "FastMCP server for SQL to PySpark conversion with batch processing"
+description = "MCP server for SQL migration, AWS Glue job generation, and PySpark optimization"
 authors = [{name = "Annas Mazhar", email = "annas.mazhar10@gmail.com"}]
 requires-python = ">=3.10"
 dependencies = [

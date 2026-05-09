@@ -22,7 +22,7 @@ from .memory_manager import MemoryManager
 from .sql_converter import SQLToPySparkConverter
 
 # Initialize components
-memory = MemoryManager()
+memory = MemoryManager() if os.environ.get("PYSPARK_MCP_CACHE") else None
 converter = SQLToPySparkConverter()
 reviewer = PySparkCodeReviewer()
 batch_processor = BatchProcessor(memory, converter)
