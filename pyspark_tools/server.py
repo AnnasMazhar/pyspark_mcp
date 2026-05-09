@@ -3738,6 +3738,9 @@ logger.info("Spark session stopped successfully")
     return "\n".join(code_parts)
 
 
+# Register consolidated tools (must be after all helpers are defined)
+from pyspark_tools import consolidated_tools  # noqa: F401
+
 if __name__ == "__main__":
     # For development/testing
     app.run()

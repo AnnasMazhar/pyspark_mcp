@@ -18,7 +18,7 @@ from pyspark_tools.server import app
 def main():
     """Start the MCP server."""
     print("🚀 Starting PySpark Tools MCP Server...")
-    print("📊 49 tools available for SQL to PySpark conversion")
+    print("📊 14 consolidated tools available for SQL to PySpark conversion")
     print("🔧 Server ready for connections")
 
     try:
