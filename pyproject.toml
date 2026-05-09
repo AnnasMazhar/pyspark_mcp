@@ -65,8 +65,10 @@ markers = [
     "integration: marks tests as integration tests",
     "cached: marks tests that use caching"
 ]
+
 [project.scripts]
 pyspark-mcp = "pyspark_tools:main"
+
 
 [project.urls]
 Homepage = "https://github.com/AnnasMazhar/pyspark_mcp"

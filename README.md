@@ -37,8 +37,6 @@ pytest tests/ -v
 - [CI/CD Documentation](docs/ci/)
 - [Optimization Guide](docs/OPTIMIZATION_ANALYSIS.md)
 
-## Development
-
 ## MCP Configuration
 
 ### Claude Desktop
@@ -71,6 +69,11 @@ mcp:
 ### Docker
 
 ```bash
+docker compose up -d
+```
+
+## Development
+
 docker compose up -d
 # Server available at stdio via docker exec
 ```
