@@ -385,16 +385,44 @@ class SQLToPySparkConverter:
 
         # Fix window function placeholders (SQLGlot uses \x01 as window ref)
         code = code.replace("\x01", "")
-        # Fix expr('') from empty window refs → row_number().over(w)
-        code = code.replace("(lit(None))", "row_number().over(w)")
-        code = code.replace("expr('')", "row_number().over(w)")
-        # Map common window function patterns
         import re
+        # Detect which window function was used from the Window spec comment
+        win_func = "row_number"
+        win_match = re.search(r"# Window spec for (\w+)", code)
+        if win_match:
+            win_func = win_match.group(1).lower()
+        # Map to correct PySpark function
+        win_func_map = {
+            "rownumber": "row_number().over(w)",
+            "row_number": "row_number().over(w)",
+            "rank": "rank().over(w)",
+            "denserank": "dense_rank().over(w)",
+            "dense_rank": "dense_rank().over(w)",
+            "lead": "lead(col('value')).over(w)",
+            "lag": "lag(col('value')).over(w)",
+            "sum": "sum(col('value')).over(w)",
+            "avg": "avg(col('value')).over(w)",
+            "count": "count(lit(1)).over(w)",
+        }
+        win_replacement = win_func_map.get(win_func, f"{win_func}().over(w)")
+        code = code.replace("(lit(None))", f"({win_replacement})")
+        code = code.replace("expr('')", win_replacement)
         code = re.sub(r"expr\('ROW_NUMBER\(\)'\)", "row_number().over(w)", code)
         code = re.sub(r"expr\('RANK\(\)'\)", "rank().over(w)", code)
         code = re.sub(r"expr\('DENSE_RANK\(\)'\)", "dense_rank().over(w)", code)
         code = re.sub(r"expr\('LEAD\(([^)]*)\)'\)", r"lead(col('')).over(w)", code)
         code = re.sub(r"expr\('LAG\(([^)]*)\)'\)", r"lag(col('')).over(w)", code)
+
+        # Fix dialect-specific functions that PySpark supports natively
+        code = code.replace("DATEPART(hour,", "hour(")
+        code = code.replace("DATEPART(day,", "dayofmonth(")
+        code = code.replace("DATEPART(month,", "month(")
+        code = code.replace("DATEPART(year,", "year(")
+        code = code.replace("DATEDIFF(second,", "datediff(")
+        # conv/lpad/substring are valid PySpark functions — just lowercase them
+        code = re.sub(r"\bCONV\(", "conv(", code)
+        code = re.sub(r"\bLPAD\(", "lpad(", code)
+        code = re.sub(r"\bSUBSTRING\(", "substring(", code)
 
         return code
 
