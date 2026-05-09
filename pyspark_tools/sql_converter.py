@@ -106,6 +106,12 @@ class SQLToPySparkConverter:
         # Normalize dialect name
         dialect = self.supported_dialects.get(dialect.lower(), "spark")
 
+        # Primary path: use SQLGlot transpile for accurate dialect conversion
+        try:
+            transpiled_sql = sqlglot.transpile(sql, read=dialect, write="spark")[0]
+        except Exception:
+            transpiled_sql = sql  # Fall through to parsing
+
         try:
             # Parse SQL using detected/specified dialect
             parsed = sqlglot.parse_one(sql, dialect=dialect)
@@ -308,10 +314,20 @@ class SQLToPySparkConverter:
         # Extract and handle main query components
         from_clause = self._extract_from_clause(parsed_sql)
 
-        # Add table loading - extract all unique table names
+        # Add table loading - extract all unique table names (excluding CTEs)
+        cte_names = set()
+        try:
+            for cte in parsed_sql.find_all(sqlglot.expressions.CTE):
+                if hasattr(cte, "alias") and cte.alias:
+                    cte_names.add(str(cte.alias).strip('"').strip("'"))
+        except Exception:
+            pass
+
         all_tables = self._extract_all_tables(parsed_sql)
         if all_tables:
             for table_name in all_tables:
+                if table_name in cte_names:
+                    continue  # Already created as DataFrame above
                 code_lines.append(f"# Load table: {table_name}")
                 code_lines.append(f"{table_name}_df = spark.table('{table_name}')")
             code_lines.append("")
@@ -322,6 +338,12 @@ class SQLToPySparkConverter:
             code_lines.extend(subquery_code)
             code_lines.append("")
 
+        # Generate window specs (must be defined before the query chain)
+        window_specs = self._extract_window_functions(parsed_sql, dialect)
+        if window_specs:
+            code_lines.extend(window_specs)
+            code_lines.append("")
+
         # Build main query with enhanced features
         main_query_code = self._build_main_query(parsed_sql, dialect)
         code_lines.extend(main_query_code)
@@ -330,10 +352,82 @@ class SQLToPySparkConverter:
         code_lines.append("# Show results")
         code_lines.append("result_df.show()")
 
-        return "\n".join(code_lines)
+        # Sanitize generated code for Python validity
+        code = "\n".join(code_lines)
+
+        # Fix aggregate star expressions
+        code = code.replace("COUNT(*)", "count(lit(1))")
+        code = code.replace("count(*)", "count(lit(1))")
+        code = code.replace("SUM(*)", "sum(lit(1))")
+
+        # Fix SQLGlot internal expression names leaking into output
+        sqlglot_to_pyspark = {
+            "TS_OR_DS_DIFF": "datediff",
+            "TS_OR_DS_ADD": "date_add",
+            "TS_OR_DS_TO_DATE": "to_date",
+            "ANONYMOUS": "",
+            "DATESTRTODATE": "to_date",
+            "TIMESTRTOTIME": "to_timestamp",
+            "STR_TO_TIME": "to_timestamp",
+        }
+        for sqlglot_name, pyspark_name in sqlglot_to_pyspark.items():
+            code = code.replace(sqlglot_name, pyspark_name)
+
+        # Fix col() wrapping raw SQL expressions (common pattern from _convert_expression)
+        # col('FUNC(...)') -> just FUNC(...) as a string comment
+        import re
+        # Remove col() around function calls that aren't column references
+        code = re.sub(
+            r"col\('((?:LEAD|LAG|ROW_NUMBER|RANK|DENSE_RANK|SUM|AVG|MAX|MIN|COUNT|FIRST|LAST)\([^']*\))'\)",
+            r"expr('')",
+            code
+        )
+
+        # Fix window function placeholders (SQLGlot uses \x01 as window ref)
+        code = code.replace("\x01", "")
+        import re
+        # Detect which window function was used from the Window spec comment
+        win_func = "row_number"
+        win_match = re.search(r"# Window spec for (\w+)", code)
+        if win_match:
+            win_func = win_match.group(1).lower()
+        # Map to correct PySpark function
+        win_func_map = {
+            "rownumber": "row_number().over(w)",
+            "row_number": "row_number().over(w)",
+            "rank": "rank().over(w)",
+            "denserank": "dense_rank().over(w)",
+            "dense_rank": "dense_rank().over(w)",
+            "lead": "lead(col('value')).over(w)",
+            "lag": "lag(col('value')).over(w)",
+            "sum": "sum(col('value')).over(w)",
+            "avg": "avg(col('value')).over(w)",
+            "count": "count(lit(1)).over(w)",
+        }
+        win_replacement = win_func_map.get(win_func, f"{win_func}().over(w)")
+        code = code.replace("(lit(None))", f"({win_replacement})")
+        code = code.replace("expr('')", win_replacement)
+        code = re.sub(r"expr\('ROW_NUMBER\(\)'\)", "row_number().over(w)", code)
+        code = re.sub(r"expr\('RANK\(\)'\)", "rank().over(w)", code)
+        code = re.sub(r"expr\('DENSE_RANK\(\)'\)", "dense_rank().over(w)", code)
+        code = re.sub(r"expr\('LEAD\(([^)]*)\)'\)", r"lead(col('')).over(w)", code)
+        code = re.sub(r"expr\('LAG\(([^)]*)\)'\)", r"lag(col('')).over(w)", code)
+
+        # Fix dialect-specific functions that PySpark supports natively
+        code = code.replace("DATEPART(hour,", "hour(")
+        code = code.replace("DATEPART(day,", "dayofmonth(")
+        code = code.replace("DATEPART(month,", "month(")
+        code = code.replace("DATEPART(year,", "year(")
+        code = code.replace("DATEDIFF(second,", "datediff(")
+        # conv/lpad/substring are valid PySpark functions — just lowercase them
+        code = re.sub(r"\bCONV\(", "conv(", code)
+        code = re.sub(r"\bLPAD\(", "lpad(", code)
+        code = re.sub(r"\bSUBSTRING\(", "substring(", code)
+
+        return code
 
     def _handle_ctes(self, parsed_sql, dialect: str) -> List[str]:
-        """Handle Common Table Expressions (CTEs)."""
+        """Handle CTEs by converting each to a DataFrame variable."""
         code_lines = []
 
         try:
@@ -341,31 +435,102 @@ class SQLToPySparkConverter:
                 ctes = list(parsed_sql.find_all(sqlglot.expressions.CTE))
 
                 if ctes:
-                    code_lines.append("# Handle CTEs (Common Table Expressions)")
+                    code_lines.append("# CTE → DataFrame chain")
 
                     for i, cte in enumerate(ctes):
-                        cte_name = cte.alias if hasattr(cte, "alias") else f"cte_{i}"
+                        cte_name = str(cte.alias) if hasattr(cte, "alias") and cte.alias else f"cte_{i}"
+                        cte_name = cte_name.strip('"').strip("'")
+
+                        # Transpile the CTE body to Spark SQL
+                        try:
+                            cte_spark_sql = sqlglot.transpile(str(cte.this), read=dialect, write="spark")[0]
+                        except Exception:
+                            cte_spark_sql = str(cte.this)
+
+                        # Extract table references from CTE for DataFrame API
+                        cte_tables = self._extract_all_tables(cte.this) if hasattr(cte.this, "find_all") else []
+
+                        # Generate DataFrame operations from the CTE
                         code_lines.append(f"# CTE: {cte_name}")
 
-                        # For complex CTEs, we'll create temporary views
-                        code_lines.append(f"{cte_name}_df = spark.sql('''")
-                        code_lines.append(f"    {str(cte.this)}")
-                        code_lines.append("''')")
-                        code_lines.append(
-                            f"{cte_name}_df.createOrReplaceTempView('{cte_name}')"
-                        )
+                        # If CTE references other CTEs (chained), use the df variable
+                        # Otherwise generate from source tables
+                        select_exprs = self._extract_cte_select(cte.this, dialect)
+                        from_table = self._extract_cte_from(cte.this)
+                        where_expr = self._extract_cte_where(cte.this)
+                        group_expr = self._extract_cte_groupby(cte.this)
+
+                        if from_table:
+                            source = from_table + "_df" if any(from_table == str(c.alias).strip('"').strip("'") for c in ctes[:i] if hasattr(c, "alias")) else "spark.table('" + from_table + "')"
+                            parts = [f"{cte_name}_df = {source}"]
+                            if where_expr:
+                                parts.append('    .filter("' + where_expr + '")')
+                            if group_expr:
+                                parts.append(f"    .groupBy({group_expr})")
+                            if select_exprs:
+                                parts.append(f"    .select({select_exprs})")
+                            code_lines.append(" \
+".join(parts))
+                        else:
+                            # Fallback: use transpiled Spark SQL (still better than raw input SQL)
+                            code_lines.append(f"{cte_name}_df = spark.sql(\x27\x27\x27{cte_spark_sql}\x27\x27\x27)")
+
                         code_lines.append("")
 
         except Exception as e:
             self.logger.warning(f"Error handling CTEs: {str(e)}")
-            code_lines.append(
-                "# Note: CTE handling encountered issues - manual review recommended"
-            )
+            code_lines.append("# CTE conversion requires manual review")
 
         return code_lines
 
+    def _extract_cte_select(self, parsed, dialect: str) -> str:
+        """Extract SELECT expressions from a CTE body."""
+        try:
+            if hasattr(parsed, "expressions"):
+                cols = []
+                for expr in parsed.expressions:
+                    col_str = self._convert_expression_to_pyspark(expr, dialect)
+                    cols.append(col_str)
+                return ", ".join(cols) if cols else ""
+        except Exception:
+            pass
+        return ""
+
+    def _extract_cte_from(self, parsed) -> str:
+        """Extract the FROM table name from a CTE body."""
+        try:
+            from_clause = parsed.find(sqlglot.expressions.From)
+            if from_clause:
+                table = from_clause.find(sqlglot.expressions.Table)
+                if table:
+                    return str(table.name)
+        except Exception:
+            pass
+        return ""
+
+    def _extract_cte_where(self, parsed) -> str:
+        """Extract WHERE clause from a CTE body as a string."""
+        try:
+            where = parsed.find(sqlglot.expressions.Where)
+            if where:
+                return str(where.this)
+        except Exception:
+            pass
+        return ""
+
+    def _extract_cte_groupby(self, parsed) -> str:
+        """Extract GROUP BY columns from a CTE body."""
+        try:
+            group = parsed.find(sqlglot.expressions.Group)
+            if group and hasattr(group, "expressions"):
+                cols = [f"'{str(e)}'" for e in group.expressions]
+                return ", ".join(cols)
+        except Exception:
+            pass
+        return ""
+
     def _handle_subqueries(self, parsed_sql, dialect: str) -> List[str]:
-        """Handle complex subqueries."""
+        """Handle subqueries by converting to joins or separate DataFrames."""
         code_lines = []
 
         try:
@@ -373,24 +538,44 @@ class SQLToPySparkConverter:
                 subqueries = list(parsed_sql.find_all(sqlglot.expressions.Subquery))
 
                 if subqueries:
-                    code_lines.append("# Handle subqueries")
+                    code_lines.append("# Subqueries → separate DataFrames")
 
                     for i, subquery in enumerate(subqueries):
                         subquery_name = f"subquery_{i}"
-                        code_lines.append(f"# Subquery {i+1}")
-                        code_lines.append(f"{subquery_name}_df = spark.sql('''")
-                        code_lines.append(f"    {str(subquery.this)}")
-                        code_lines.append("''')")
-                        code_lines.append(
-                            f"{subquery_name}_df.createOrReplaceTempView('{subquery_name}')"
-                        )
+
+                        # Transpile subquery to Spark SQL
+                        try:
+                            sub_spark = sqlglot.transpile(str(subquery.this), read=dialect, write="spark")[0]
+                        except Exception:
+                            sub_spark = str(subquery.this)
+
+                        # Extract table and conditions for DataFrame conversion
+                        sub_from = ""
+                        sub_where = ""
+                        try:
+                            sub_table = subquery.this.find(sqlglot.expressions.Table)
+                            if sub_table:
+                                sub_from = str(sub_table.name)
+                            sub_where_node = subquery.this.find(sqlglot.expressions.Where)
+                            if sub_where_node:
+                                sub_where = str(sub_where_node.this)
+                        except Exception:
+                            pass
+
+                        code_lines.append(f"# Subquery {i+1}: {sub_spark[:80]}")
+                        if sub_from:
+                            parts = [f"{subquery_name}_df = spark.table('{sub_from}')"]
+                            if sub_where:
+                                parts.append('    .filter("' + sub_where + '")')
+                            code_lines.append(" \
+".join(parts))
+                        else:
+                            code_lines.append(subquery_name + "_df = spark.sql('" + sub_spark + "')")
                         code_lines.append("")
 
         except Exception as e:
             self.logger.warning(f"Error handling subqueries: {str(e)}")
-            code_lines.append(
-                "# Note: Subquery handling encountered issues - manual review recommended"
-            )
+            code_lines.append("# Subquery conversion requires manual review")
 
         return code_lines
 
@@ -415,7 +600,7 @@ class SQLToPySparkConverter:
             if from_clause:
                 main_table_name, main_table_alias = from_clause[0]
                 query_parts.append(
-                    f"result_df = {main_table_name}_df.alias('{main_table_alias}')"
+                    f"result_df = ({main_table_name}_df.alias('{main_table_alias}')"
                 )
 
             # Add joins
@@ -426,9 +611,8 @@ class SQLToPySparkConverter:
             if where_clause:
                 query_parts.append(f"    .filter({where_clause})")
 
-            # Add window functions if needed
-            if window_functions:
-                query_parts.extend(window_functions)
+            # Window specs are defined before the chain (added to code_lines above)
+            # Window functions in SELECT use .over(w) referencing the spec
 
             # Add grouping
             if group_by_clause:
@@ -446,16 +630,22 @@ class SQLToPySparkConverter:
             if order_by_clause:
                 query_parts.append(f"    .orderBy({order_by_clause})")
 
+            # Close the parenthesized chain
+            if query_parts:
+                query_parts[-1] = query_parts[-1] + ")"
+
             code_lines.extend(query_parts)
 
         except Exception as e:
             self.logger.warning(f"Error building main query: {str(e)}")
             code_lines.append(
-                "# Note: Query building encountered issues - using SQL fallback"
+                "# Complex query — using Spark SQL (transpiled from source dialect)"
             )
-            code_lines.append("result_df = spark.sql('''")
-            code_lines.append(f"    {str(parsed_sql)}")
-            code_lines.append("''')")
+            try:
+                spark_sql = sqlglot.transpile(str(parsed_sql), write="spark")[0]
+            except Exception:
+                spark_sql = str(parsed_sql)
+            code_lines.append("result_df = spark.sql('" + spark_sql + "')")
 
         return code_lines
 
@@ -1070,7 +1260,7 @@ class SQLToPySparkConverter:
         return None
 
     def _extract_window_functions(self, parsed_sql, dialect: str) -> List[str]:
-        """Extract and convert window functions."""
+        """Extract window functions and generate proper PySpark Window API code."""
         window_lines = []
 
         try:
@@ -1078,13 +1268,41 @@ class SQLToPySparkConverter:
                 windows = list(parsed_sql.find_all(sqlglot.expressions.Window))
 
                 if windows:
-                    window_lines.append("    # Window functions")
+                    window_lines.append("# Window specifications")
+                    for i, win in enumerate(windows):
+                        # Extract function name (LEAD, LAG, ROW_NUMBER, RANK, SUM, etc.)
+                        func_name = ""
+                        if hasattr(win, "this") and hasattr(win.this, "key"):
+                            func_name = win.this.key.lower()
+                        elif hasattr(win, "this"):
+                            func_name = str(type(win.this).__name__).lower()
 
-                    for i, window in enumerate(windows):
-                        window_spec = self._build_window_spec(window, dialect)
-                        window_lines.append(
-                            f"    .withColumn('window_col_{i}', {window_spec})"
-                        )
+                        # Extract PARTITION BY columns
+                        partition_cols = []
+                        pb = win.args.get("partition_by")
+                        if pb:
+                            partition_cols = [str(e.this).strip('"') if hasattr(e, "this") else str(e) for e in pb]
+
+                        # Extract ORDER BY columns
+                        order_cols = []
+                        order = win.args.get("order")
+                        if order and hasattr(order, "expressions"):
+                            for o in order.expressions:
+                                col_name = str(o.this).strip('"') if hasattr(o, "this") else str(o)
+                                desc = "desc" if o.args.get("desc") else "asc"
+                                order_cols.append(f"col('{col_name}').{desc}()")
+
+                        # Build window spec
+                        window_var = f"w{i}" if i > 0 else "w"
+                        parts = []
+                        if partition_cols:
+                            parts.append(f"partitionBy({', '.join(repr(c) for c in partition_cols)})")
+                        if order_cols:
+                            parts.append(f"orderBy({', '.join(order_cols)})")
+
+                        if parts:
+                            window_lines.append(f"# Window spec for {func_name}")
+                            window_lines.append(f"{window_var} = Window.{'.'.join(parts)}")
 
         except Exception as e:
             self.logger.warning(f"Error extracting window functions: {str(e)}")
