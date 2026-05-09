@@ -1,6 +1,6 @@
 """PySpark Tools - FastMCP server for SQL to PySpark conversion and optimization."""
 
-__version__ = "1.0.0"
+__version__ = "0.0.1"
 
 def main():
     """CLI entry point for pyspark-mcp server."""
