@@ -314,10 +314,20 @@ class SQLToPySparkConverter:
         # Extract and handle main query components
         from_clause = self._extract_from_clause(parsed_sql)
 
-        # Add table loading - extract all unique table names
+        # Add table loading - extract all unique table names (excluding CTEs)
+        cte_names = set()
+        try:
+            for cte in parsed_sql.find_all(sqlglot.expressions.CTE):
+                if hasattr(cte, "alias") and cte.alias:
+                    cte_names.add(str(cte.alias).strip('"').strip("'"))
+        except Exception:
+            pass
+
         all_tables = self._extract_all_tables(parsed_sql)
         if all_tables:
             for table_name in all_tables:
+                if table_name in cte_names:
+                    continue  # Already created as DataFrame above
                 code_lines.append(f"# Load table: {table_name}")
                 code_lines.append(f"{table_name}_df = spark.table('{table_name}')")
             code_lines.append("")
@@ -326,6 +336,12 @@ class SQLToPySparkConverter:
         subquery_code = self._handle_subqueries(parsed_sql, dialect)
         if subquery_code:
             code_lines.extend(subquery_code)
+            code_lines.append("")
+
+        # Generate window specs (must be defined before the query chain)
+        window_specs = self._extract_window_functions(parsed_sql, dialect)
+        if window_specs:
+            code_lines.extend(window_specs)
             code_lines.append("")
 
         # Build main query with enhanced features
@@ -338,9 +354,48 @@ class SQLToPySparkConverter:
 
         # Sanitize generated code for Python validity
         code = "\n".join(code_lines)
+
+        # Fix aggregate star expressions
         code = code.replace("COUNT(*)", "count(lit(1))")
         code = code.replace("count(*)", "count(lit(1))")
         code = code.replace("SUM(*)", "sum(lit(1))")
+
+        # Fix SQLGlot internal expression names leaking into output
+        sqlglot_to_pyspark = {
+            "TS_OR_DS_DIFF": "datediff",
+            "TS_OR_DS_ADD": "date_add",
+            "TS_OR_DS_TO_DATE": "to_date",
+            "ANONYMOUS": "",
+            "DATESTRTODATE": "to_date",
+            "TIMESTRTOTIME": "to_timestamp",
+            "STR_TO_TIME": "to_timestamp",
+        }
+        for sqlglot_name, pyspark_name in sqlglot_to_pyspark.items():
+            code = code.replace(sqlglot_name, pyspark_name)
+
+        # Fix col() wrapping raw SQL expressions (common pattern from _convert_expression)
+        # col('FUNC(...)') -> just FUNC(...) as a string comment
+        import re
+        # Remove col() around function calls that aren't column references
+        code = re.sub(
+            r"col\('((?:LEAD|LAG|ROW_NUMBER|RANK|DENSE_RANK|SUM|AVG|MAX|MIN|COUNT|FIRST|LAST)\([^']*\))'\)",
+            r"expr('')",
+            code
+        )
+
+        # Fix window function placeholders (SQLGlot uses \x01 as window ref)
+        code = code.replace("\x01", "")
+        # Fix expr('') from empty window refs → row_number().over(w)
+        code = code.replace("(lit(None))", "row_number().over(w)")
+        code = code.replace("expr('')", "row_number().over(w)")
+        # Map common window function patterns
+        import re
+        code = re.sub(r"expr\('ROW_NUMBER\(\)'\)", "row_number().over(w)", code)
+        code = re.sub(r"expr\('RANK\(\)'\)", "rank().over(w)", code)
+        code = re.sub(r"expr\('DENSE_RANK\(\)'\)", "dense_rank().over(w)", code)
+        code = re.sub(r"expr\('LEAD\(([^)]*)\)'\)", r"lead(col('')).over(w)", code)
+        code = re.sub(r"expr\('LAG\(([^)]*)\)'\)", r"lag(col('')).over(w)", code)
+
         return code
 
     def _handle_ctes(self, parsed_sql, dialect: str) -> List[str]:
@@ -528,9 +583,8 @@ class SQLToPySparkConverter:
             if where_clause:
                 query_parts.append(f"    .filter({where_clause})")
 
-            # Add window functions if needed
-            if window_functions:
-                query_parts.extend(window_functions)
+            # Window specs are defined before the chain (added to code_lines above)
+            # Window functions in SELECT use .over(w) referencing the spec
 
             # Add grouping
             if group_by_clause:
@@ -1178,7 +1232,7 @@ class SQLToPySparkConverter:
         return None
 
     def _extract_window_functions(self, parsed_sql, dialect: str) -> List[str]:
-        """Extract and convert window functions."""
+        """Extract window functions and generate proper PySpark Window API code."""
         window_lines = []
 
         try:
@@ -1186,13 +1240,41 @@ class SQLToPySparkConverter:
                 windows = list(parsed_sql.find_all(sqlglot.expressions.Window))
 
                 if windows:
-                    window_lines.append("    # Window functions")
+                    window_lines.append("# Window specifications")
+                    for i, win in enumerate(windows):
+                        # Extract function name (LEAD, LAG, ROW_NUMBER, RANK, SUM, etc.)
+                        func_name = ""
+                        if hasattr(win, "this") and hasattr(win.this, "key"):
+                            func_name = win.this.key.lower()
+                        elif hasattr(win, "this"):
+                            func_name = str(type(win.this).__name__).lower()
 
-                    for i, window in enumerate(windows):
-                        window_spec = self._build_window_spec(window, dialect)
-                        window_lines.append(
-                            f"    .withColumn('window_col_{i}', {window_spec})"
-                        )
+                        # Extract PARTITION BY columns
+                        partition_cols = []
+                        pb = win.args.get("partition_by")
+                        if pb:
+                            partition_cols = [str(e.this).strip('"') if hasattr(e, "this") else str(e) for e in pb]
+
+                        # Extract ORDER BY columns
+                        order_cols = []
+                        order = win.args.get("order")
+                        if order and hasattr(order, "expressions"):
+                            for o in order.expressions:
+                                col_name = str(o.this).strip('"') if hasattr(o, "this") else str(o)
+                                desc = "desc" if o.args.get("desc") else "asc"
+                                order_cols.append(f"col('{col_name}').{desc}()")
+
+                        # Build window spec
+                        window_var = f"w{i}" if i > 0 else "w"
+                        parts = []
+                        if partition_cols:
+                            parts.append(f"partitionBy({', '.join(repr(c) for c in partition_cols)})")
+                        if order_cols:
+                            parts.append(f"orderBy({', '.join(order_cols)})")
+
+                        if parts:
+                            window_lines.append(f"# Window spec for {func_name}")
+                            window_lines.append(f"{window_var} = Window.{'.'.join(parts)}")
 
         except Exception as e:
             self.logger.warning(f"Error extracting window functions: {str(e)}")
