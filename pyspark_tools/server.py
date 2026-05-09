@@ -187,7 +187,6 @@ def _analyze_sql_context_internal(sql_content: str) -> Dict[str, Any]:
         }
 
 
-@app.tool()
 def convert_sql_to_pyspark(
     sql_query: str,
     table_info: Optional[Dict] = None,
@@ -211,7 +210,6 @@ def convert_sql_to_pyspark(
     )
 
 
-@app.tool()
 def complete_sql_conversion(
     sql_content: str,
     optimization_level: str = "standard",
@@ -345,7 +343,6 @@ def complete_sql_conversion(
         }
 
 
-@app.tool()
 def analyze_sql_context(sql_content: str) -> Dict[str, Any]:
     """
     Automatically analyze SQL to extract context information.
@@ -362,8 +359,7 @@ def analyze_sql_context(sql_content: str) -> Dict[str, Any]:
     return _analyze_sql_context_internal(sql_content)
 
 
-@app.tool()
-def convert_dataframe_to_dynamic_frame(
+def _convert_dataframe_to_dynamic_frame_simple(
     pyspark_code: str,
     source_database: str,
     source_table: str,
@@ -406,7 +402,6 @@ def convert_dataframe_to_dynamic_frame(
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def process_editor_selection(
     selected_text: str,
     file_path: Optional[str] = None,
@@ -476,7 +471,6 @@ def process_editor_selection(
         }
 
 
-@app.tool()
 def realtime_sql_assistance(
     current_sql: str, cursor_position: Optional[int] = None
 ) -> Dict[str, Any]:
@@ -539,7 +533,6 @@ def realtime_sql_assistance(
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def workspace_analysis(
     workspace_files: List[Dict[str, str]],  # [{"path": "...", "content": "..."}]
     analysis_scope: str = "sql_optimization",
@@ -865,7 +858,6 @@ def _generate_contextual_suggestions(sql_content: str) -> List[str]:
     return suggestions
 
 
-@app.tool()
 def generate_project_structure(
     project_name: str,
     sql_contents: List[str],  # List of SQL content (not file paths!)
@@ -1062,6 +1054,7 @@ class {class_name}:
             "suggestions_count": {conversion.get("suggestions", 0)}
         }}
 
+from pyspark_tools import consolidated_tools  # noqa: F401
 if __name__ == "__main__":
     processor = {class_name}()
     result = processor.process()
@@ -1468,7 +1461,6 @@ def _calculate_project_performance_improvement(conversions: List[Dict]) -> str:
     return "25-35%"
 
 
-@app.tool()
 def review_pyspark_code(
     code: str, focus_areas: Optional[List[str]] = None
 ) -> Dict[str, Any]:
@@ -1485,7 +1477,6 @@ def review_pyspark_code(
     return _review_pyspark_code_internal(code, focus_areas)
 
 
-@app.tool()
 def optimize_pyspark_code(
     code: str, optimization_level: str = "standard"
 ) -> Dict[str, Any]:
@@ -1502,8 +1493,7 @@ def optimize_pyspark_code(
     return _optimize_pyspark_code_internal(code, optimization_level)
 
 
-@app.tool()
-def suggest_partitioning_strategy(
+def _suggest_partitioning_strategy_legacy(
     pyspark_code: str, table_info: Optional[Dict] = None
 ) -> Dict[str, Any]:
     """
@@ -1547,7 +1537,6 @@ def suggest_partitioning_strategy(
         }
 
 
-@app.tool()
 def get_conversion_history(limit: int = 10) -> Dict[str, Any]:
     """
     Get recent SQL to PySpark conversion history.
@@ -1571,7 +1560,6 @@ def get_conversion_history(limit: int = 10) -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def search_conversions(query: str, limit: int = 5) -> Dict[str, Any]:
     """
     Search through stored SQL to PySpark conversions.
@@ -1597,7 +1585,6 @@ def search_conversions(query: str, limit: int = 5) -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def store_context(key: str, value: Any) -> Dict[str, str]:
     """
     Store context information for future reference.
@@ -1617,7 +1604,6 @@ def store_context(key: str, value: Any) -> Dict[str, str]:
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def get_context(key: str) -> Dict[str, Any]:
     """
     Retrieve stored context information.
@@ -1644,7 +1630,6 @@ def get_context(key: str) -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def generate_aws_glue_job_template(
     job_name: str,
     source_format: str = "parquet",
@@ -1716,7 +1701,6 @@ def generate_aws_glue_job_template(
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def batch_process_files(
     file_paths: List[str],
     output_dir: Optional[str] = None,
@@ -1761,7 +1745,6 @@ def batch_process_files(
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def batch_process_directory(
     directory_path: str,
     output_dir: Optional[str] = None,
@@ -1811,7 +1794,6 @@ def batch_process_directory(
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def extract_sql_from_pdf(pdf_path: str) -> Dict[str, Any]:
     """
     Extract SQL queries from a PDF document.
@@ -1846,7 +1828,6 @@ def extract_sql_from_pdf(pdf_path: str) -> Dict[str, Any]:
         return {"status": "error", "message": str(e), "pdf_path": pdf_path}
 
 
-@app.tool()
 def get_batch_status(job_id: int) -> Dict[str, Any]:
     """
     Get the current status of a batch processing job.
@@ -1906,7 +1887,6 @@ def get_batch_status(job_id: int) -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def cancel_batch_job(job_id: int) -> Dict[str, Any]:
     """
     Cancel a running batch processing job.
@@ -1935,7 +1915,6 @@ def cancel_batch_job(job_id: int) -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def get_active_batch_jobs() -> Dict[str, Any]:
     """
     Get list of all currently active batch jobs.
@@ -1973,7 +1952,6 @@ def get_active_batch_jobs() -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def get_recent_batch_jobs(limit: int = 10) -> Dict[str, Any]:
     """
     Get recent batch jobs from the database.
@@ -2009,7 +1987,6 @@ def get_recent_batch_jobs(limit: int = 10) -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def analyze_code_patterns(
     code_samples: List[str], similarity_threshold: float = 0.8
 ) -> Dict[str, Any]:
@@ -2064,7 +2041,6 @@ def analyze_code_patterns(
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def generate_utility_functions(
     code_samples: List[str], min_usage_count: int = 2
 ) -> Dict[str, Any]:
@@ -2118,7 +2094,6 @@ def generate_utility_functions(
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def refactor_code_with_patterns(
     original_code: str, code_samples: List[str]
 ) -> Dict[str, Any]:
@@ -2176,7 +2151,6 @@ def refactor_code_with_patterns(
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def get_stored_patterns(min_usage_count: int = 1, limit: int = 20) -> Dict[str, Any]:
     """
     Get stored duplicate patterns from the database.
@@ -2211,7 +2185,6 @@ def get_stored_patterns(min_usage_count: int = 1, limit: int = 20) -> Dict[str, 
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def search_code_patterns(query: str, limit: int = 10) -> Dict[str, Any]:
     """
     Search stored code patterns by description or template.
@@ -2247,7 +2220,6 @@ def search_code_patterns(query: str, limit: int = 10) -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def get_pattern_statistics() -> Dict[str, Any]:
     """
     Get statistics about detected and stored patterns.
@@ -2297,7 +2269,6 @@ def get_pattern_statistics() -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def analyze_data_flow(
     pyspark_code: str, table_info: Optional[Dict] = None
 ) -> Dict[str, Any]:
@@ -2348,7 +2319,6 @@ def analyze_data_flow(
         }
 
 
-@app.tool()
 def suggest_partitioning_strategy(
     pyspark_code: str, table_info: Optional[Dict] = None
 ) -> Dict[str, Any]:
@@ -2393,7 +2363,6 @@ def suggest_partitioning_strategy(
         }
 
 
-@app.tool()
 def recommend_join_strategy(
     pyspark_code: str, table_info: Optional[Dict] = None
 ) -> Dict[str, Any]:
@@ -2439,7 +2408,6 @@ def recommend_join_strategy(
         }
 
 
-@app.tool()
 def estimate_performance_impact(
     pyspark_code: str, table_info: Optional[Dict] = None
 ) -> Dict[str, Any]:
@@ -2484,7 +2452,6 @@ def estimate_performance_impact(
         }
 
 
-@app.tool()
 def generate_comprehensive_optimizations(
     pyspark_code: str, table_info: Optional[Dict] = None
 ) -> Dict[str, Any]:
@@ -2551,7 +2518,6 @@ def generate_comprehensive_optimizations(
         }
 
 
-@app.tool()
 def get_optimization_analytics(
     optimization_type: Optional[str] = None, limit: int = 50
 ) -> Dict[str, Any]:
@@ -2597,7 +2563,6 @@ def get_optimization_analytics(
         }
 
 
-@app.tool()
 def convert_dataframe_to_dynamic_frame(
     pyspark_code: str,
     source_database: str,
@@ -2641,7 +2606,6 @@ def convert_dataframe_to_dynamic_frame(
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def generate_glue_job_with_sql_conversion(
     sql_query: str,
     job_name: str,
@@ -2704,7 +2668,6 @@ def generate_glue_job_with_sql_conversion(
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def generate_data_catalog_table_definition(
     database_name: str,
     table_name: str,
@@ -2786,7 +2749,6 @@ def generate_data_catalog_table_definition(
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def detect_schema_from_sample_data(
     sample_data: Union[Dict[str, Any], List[Dict[str, Any]]],
     table_name: str,
@@ -2816,7 +2778,6 @@ def detect_schema_from_sample_data(
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def generate_schema_evolution_strategy(
     current_columns: List[Dict[str, str]],
     new_columns: List[Dict[str, str]],
@@ -2872,7 +2833,6 @@ def generate_schema_evolution_strategy(
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def analyze_s3_optimization_opportunities(
     s3_location: str,
     database_name: str,
@@ -2917,7 +2877,6 @@ def analyze_s3_optimization_opportunities(
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def generate_s3_optimization_strategy(
     database_name: str,
     table_name: str,
@@ -2974,7 +2933,6 @@ def generate_s3_optimization_strategy(
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def generate_small_files_consolidation_job(
     source_database: str,
     source_table: str,
@@ -3022,7 +2980,6 @@ def generate_small_files_consolidation_job(
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def generate_incremental_processing_job(
     source_database: str,
     source_table: str,
@@ -3073,7 +3030,6 @@ def generate_incremental_processing_job(
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def generate_job_bookmark_configuration(
     job_name: str,
     bookmark_strategy: str = "enable",
@@ -3103,7 +3059,6 @@ def generate_job_bookmark_configuration(
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def generate_change_data_capture_job(
     source_database: str,
     source_table: str,
@@ -3154,7 +3109,6 @@ def generate_change_data_capture_job(
         return {"status": "error", "message": str(e)}
 
 
-@app.tool()
 def generate_glue_job_properties(
     job_name: str,
     job_type: str = "etl",
@@ -3236,7 +3190,6 @@ def generate_glue_job_properties(
 # =============================================================================
 
 
-@app.tool()
 def analyze_s3_data_source(
     s3_path: str, include_schema_inference: bool = True
 ) -> Dict[str, Any]:
@@ -3294,7 +3247,6 @@ def analyze_s3_data_source(
         }
 
 
-@app.tool()
 def analyze_delta_table(
     table_path: str, analyze_history: bool = False
 ) -> Dict[str, Any]:
@@ -3362,7 +3314,6 @@ def analyze_delta_table(
         }
 
 
-@app.tool()
 def analyze_codebase(
     directory_path: str,
     include_optimization_suggestions: bool = True,
@@ -3457,7 +3408,6 @@ def analyze_codebase(
         }
 
 
-@app.tool()
 def generate_optimized_pipeline(
     data_sources: List[Dict[str, str]],
     processing_requirements: str,
@@ -3787,6 +3737,9 @@ logger.info("Spark session stopped successfully")
 
     return "\n".join(code_parts)
 
+
+# Register consolidated tools (must be after all helpers are defined)
+from pyspark_tools import consolidated_tools  # noqa: F401
 
 if __name__ == "__main__":
     # For development/testing

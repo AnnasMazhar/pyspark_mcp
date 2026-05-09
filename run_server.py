@@ -3,7 +3,7 @@
 Entry point for the PySpark Tools MCP Server.
 
 This script starts the FastMCP server for SQL to PySpark conversion
-with all 49 tools available for use.
+with 14 consolidated tools (router pattern) for LLM context efficiency.
 """
 
 import sys
@@ -18,7 +18,7 @@ from pyspark_tools.server import app
 def main():
     """Start the MCP server."""
     print("🚀 Starting PySpark Tools MCP Server...")
-    print("📊 49 tools available for SQL to PySpark conversion")
+    print("📊 14 consolidated tools available for SQL to PySpark conversion")
     print("🔧 Server ready for connections")
 
     try:
