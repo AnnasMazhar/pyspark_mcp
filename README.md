@@ -1,5 +1,7 @@
 # PySpark MCP Server
 
+<!-- mcp-name: io.github.AnnasMazhar/pyspark-mcp -->
+
 SQL migration assistance, AWS Glue job generation, and Spark code optimization — as an MCP server.
 
 [![CI Pipeline](https://github.com/AnnasMazhar/pyspark_mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/AnnasMazhar/pyspark_mcp/actions/workflows/ci.yml)
