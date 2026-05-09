@@ -203,7 +203,7 @@ jobs:
           --cov-report=term-missing \
           --cov-fail-under=60
         
-        echo "✓ Coverage meets minimum threshold (70%)"
+        echo "✓ Coverage meets minimum threshold (60%)"
     
     - name: Check for new untested code
       run: |
