@@ -75,8 +75,3 @@ Homepage = "https://github.com/AnnasMazhar/pyspark_mcp"
 Repository = "https://github.com/AnnasMazhar/pyspark_mcp"
 Issues = "https://github.com/AnnasMazhar/pyspark_mcp/issues"
 
-[project.optional-dependencies]
-mcp-registry = []
-
-[tool.mcp]
-name = "io.github.AnnasMazhar/pyspark-mcp"
