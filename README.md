@@ -39,6 +39,43 @@ pytest tests/ -v
 
 ## Development
 
+## MCP Configuration
+
+### Claude Desktop
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "pyspark-tools": {
+      "command": "pyspark-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+### Hermes Agent
+
+Add to `~/.hermes/config.yaml`:
+
+```yaml
+mcp:
+  servers:
+    pyspark:
+      command: pyspark-mcp
+      enabled_tools: all
+```
+
+### Docker
+
+```bash
+docker compose up -d
+# Server available at stdio via docker exec
+```
+
+
 ```bash
 # Setup
 python -m venv .venv
