@@ -4,8 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyspark-tools"
-version = "0.0.3"
+version = "0.0.4"
 description = "MCP server for SQL migration, AWS Glue job generation, and PySpark optimization"
+readme = "README.md"
 authors = [{name = "Annas Mazhar", email = "annas.mazhar10@gmail.com"}]
 requires-python = ">=3.10"
 dependencies = [
