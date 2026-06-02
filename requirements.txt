@@ -6,7 +6,7 @@ sqlite-utils>=3.39
 pypdf>=6.1.3
 pdfplumber>=0.10.0
 boto3>=1.34.0
-botocore>=1.34.0
+botocore>=1.43.19
 
 # Development dependencies
 black>=24.3.0
