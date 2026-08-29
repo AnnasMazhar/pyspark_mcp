@@ -292,9 +292,10 @@ for f in os.listdir('test_queries'):
     
     - name: Check commit message format
       if: github.event_name == 'pull_request'
+      env:
+        PR_TITLE: ${{ github.event.pull_request.title }}
       run: |
         # Enforce conventional commits for main branch
-        PR_TITLE="${{ github.event.pull_request.title }}"
         if ! echo "$PR_TITLE" | grep -qE "^(feat|fix|docs|style|refactor|perf|test|chore|ci|build)(\(.+\))?: .+"; then
           echo "::error::PR title must follow conventional commits format"
           echo "Examples: feat: add new feature, fix: resolve bug, docs: update readme"

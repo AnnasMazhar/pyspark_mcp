@@ -18,8 +18,9 @@ jobs:
         fetch-depth: 0
     
     - name: Check PR title format
+      env:
+        PR_TITLE: ${{ github.event.pull_request.title }}
       run: |
-        PR_TITLE="${{ github.event.pull_request.title }}"
         # Allow conventional commits format OR branch-name format (case-insensitive)
         if echo "$PR_TITLE" | grep -qiE "^(feat|fix|docs|style|refactor|perf|test|chore|ci|build)(\(.+\))?: .+"; then
           echo "✓ PR title follows conventional commits"
@@ -38,8 +39,9 @@ jobs:
         fi
     
     - name: Check PR description
+      env:
+        PR_BODY: ${{ github.event.pull_request.body }}
       run: |
-        PR_BODY="${{ github.event.pull_request.body }}"
         if [ -z "$PR_BODY" ] || [ ${#PR_BODY} -lt 20 ]; then
           echo "::warning::PR description is too short or empty"
           echo "Please provide a meaningful description of your changes"
@@ -49,8 +51,9 @@ jobs:
         fi
     
     - name: Check for WIP or Draft markers
+      env:
+        PR_TITLE: ${{ github.event.pull_request.title }}
       run: |
-        PR_TITLE="${{ github.event.pull_request.title }}"
         if echo "$PR_TITLE" | grep -qiE "\b(wip|draft|do not merge|dnm)\b"; then
           echo "::error::PR appears to be work in progress"
           echo "Please mark as draft or remove WIP markers when ready"
@@ -59,8 +62,9 @@ jobs:
         echo "✓ PR is ready for review"
     
     - name: Check branch naming
+      env:
+        BRANCH_NAME: ${{ github.head_ref }}
       run: |
-        BRANCH_NAME="${{ github.head_ref }}"
         if ! echo "$BRANCH_NAME" | grep -qE "^(feature|bugfix|hotfix|release|docs|refactor|test)/[a-z0-9-]+$"; then
           echo "::warning::Branch name doesn't follow convention"
           echo "Recommended format: feature/my-feature, bugfix/fix-issue, hotfix/critical-fix"
@@ -106,12 +110,14 @@ jobs:
         fetch-depth: 0
     
     - name: Check PR size
+      env:
+        BASE_REF: ${{ github.base_ref }}
       run: |
         # Get changed files count
-        CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | wc -l)
+        CHANGED_FILES=$(git diff --name-only origin/${BASE_REF}...HEAD | wc -l)
         
         # Get lines changed
-        LINES_CHANGED=$(git diff --shortstat origin/${{ github.base_ref }}...HEAD | grep -oE '[0-9]+ insertion|[0-9]+ deletion' | grep -oE '[0-9]+' | awk '{sum+=$1} END {print sum}')
+        LINES_CHANGED=$(git diff --shortstat origin/${BASE_REF}...HEAD | grep -oE '[0-9]+ insertion|[0-9]+ deletion' | grep -oE '[0-9]+' | awk '{sum+=$1} END {print sum}')
         
         echo "Files changed: $CHANGED_FILES"
         echo "Lines changed: $LINES_CHANGED"
@@ -159,12 +165,14 @@ jobs:
         fetch-depth: 0
     
     - name: Check for merge conflicts
+      env:
+        BASE_REF: ${{ github.base_ref }}
       run: |
-        git fetch origin ${{ github.base_ref }}
+        git fetch origin ${BASE_REF}
         
         # Try to merge base branch
-        if ! git merge --no-commit --no-ff origin/${{ github.base_ref }}; then
-          echo "::error::Merge conflicts detected with ${{ github.base_ref }}"
+        if ! git merge --no-commit --no-ff origin/${BASE_REF}; then
+          echo "::error::Merge conflicts detected with ${BASE_REF}"
           echo "Please resolve conflicts before merging"
           git merge --abort || true
           exit 1
@@ -204,9 +212,11 @@ jobs:
         echo "✓ Coverage meets minimum threshold (60%)"
     
     - name: Check for new untested code
+      env:
+        BASE_REF: ${{ github.base_ref }}
       run: |
         # Get list of changed Python files
-        CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep "\.py$" | grep "^pyspark_tools/" || true)
+        CHANGED_FILES=$(git diff --name-only origin/${BASE_REF}...HEAD | grep "\.py$" | grep "^pyspark_tools/" || true)
         
         if [ -n "$CHANGED_FILES" ]; then
           echo "Changed files:"

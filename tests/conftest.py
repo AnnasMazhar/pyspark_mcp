@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import Any, Dict, Generator
 from unittest.mock import Mock, patch
 
+# Isolate server.py's module-level MemoryManager from ~/.cache/mcp/memory.sqlite
+# BEFORE any pyspark_tools import (that manager is constructed at import time).
+os.environ["PYSPARK_TOOLS_DB_PATH"] = os.path.join(
+    tempfile.gettempdir(), f"pytest-memory-{os.getpid()}.sqlite"
+)
+
 import pytest
 
 from pyspark_tools.sql_converter import SQLToPySparkConverter
