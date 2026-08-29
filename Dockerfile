@@ -54,9 +54,8 @@ RUN echo "Running basic validation..." && \
     python -m py_compile run_server.py && \
     echo "Basic syntax validation passed"
 
-# Expose port and use a small healthcheck script (scripts/healthcheck.py)
-EXPOSE 8000
+# Stdio MCP only — no HTTP server.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python /app/scripts/healthcheck.py
 
-CMD ["python", "-m", "pyspark_tools"]
+CMD ["pyspark-tools"]

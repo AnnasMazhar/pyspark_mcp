@@ -254,8 +254,8 @@ def optimize(
     **Modes:**
 
     ``code``
-        Apply optimizations to PySpark code.
-        *Parameters:* ``code`` (required), ``optimization_level``
+        Return pattern-based suggestions for PySpark code. Does **not** rewrite
+        the input. *Parameters:* ``code`` (required), ``optimization_level``
 
     ``joins``
         Recommend join strategies based on estimated table sizes.
@@ -388,7 +388,7 @@ def glue_job(
     number_of_workers: int = 2,
     max_retries: int = 0,
     timeout: int = 2880,
-    glue_version: str = "4.0",
+    glue_version: str = "5.0",
     enable_continuous_logging: bool = True,
     enable_metrics: bool = True,
     enable_spark_ui: bool = True,
@@ -613,12 +613,12 @@ def glue_s3(
     consolidation_strategy: str = "coalesce",
 ) -> Dict[str, Any]:
     """
-    Analyze and optimize S3 data layouts for AWS Glue.
+    Analyze S3 data layouts using **path heuristics** (no AWS API call).
 
     **Modes:**
 
     ``analyze``
-        Analyze S3 data layout for optimization opportunities.
+        Path-heuristic layout suggestions. No AWS call; figures are not measured.
         *Parameters:* ``s3_location`` (required), ``database_name`` (required),
         ``table_name`` (required), ``data_format``, ``query_patterns``, ``data_size_gb``
 

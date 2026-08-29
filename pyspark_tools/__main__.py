@@ -1,4 +1,4 @@
-"""Allow ``python -m pyspark_tools`` as an alias for ``pyspark-mcp``."""
+"""Allow ``python -m pyspark_tools`` as an alias for ``pyspark-tools``."""
 
 from pyspark_tools import main
 

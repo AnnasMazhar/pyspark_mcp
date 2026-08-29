@@ -110,8 +110,9 @@ class TestOptimizeRouter:
     def test_optimize_code(self):
         result = optimize(mode="code", code="df.filter(col('x') == 1).select('y')")
         _assert_success(result, "optimize")
-        assert "optimized_code" in result
         assert "suggestions" in result
+        assert "optimized_code" not in result
+        assert result.get("original_code") == "df.filter(col('x') == 1).select('y')"
 
 
 class TestReviewRouter:

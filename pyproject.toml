@@ -68,7 +68,8 @@ markers = [
 ]
 
 [project.scripts]
-pyspark-mcp = "pyspark_tools:main"
+pyspark-tools = "pyspark_tools:main"
+pyspark-mcp = "pyspark_tools:deprecated_mcp_main"
 
 
 [project.urls]

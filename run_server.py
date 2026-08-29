@@ -2,8 +2,9 @@
 """
 Entry point for the PySpark Tools MCP Server.
 
-Development convenience only. The supported CLI is ``pyspark-mcp``
-(``pyspark_tools:main`` via pyproject.toml).
+Development convenience only. The supported CLI is ``pyspark-tools``
+(``pyspark_tools:main`` via pyproject.toml). ``pyspark-mcp`` is a
+deprecated alias that warns to stderr, then starts this server.
 """
 
 import sys

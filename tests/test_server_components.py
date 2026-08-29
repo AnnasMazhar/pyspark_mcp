@@ -45,7 +45,7 @@ class TestServerComponentIntegration:
         assert hash_id is not None
 
         # Retrieve conversion
-        retrieved = memory.get_conversion(sql_query)
+        retrieved = memory.get_conversion(sql_query, dialect="postgres")
         assert retrieved is not None
         assert retrieved["sql_query"] == sql_query
         assert retrieved["pyspark_code"] == pyspark_code

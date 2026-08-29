@@ -3,6 +3,12 @@
 SQL migration assistance, AWS Glue job *template* generation, and Spark code
 optimization — as an MCP server.
 
+> **Not the live-Spark `pyspark-mcp` package.** This project is SQL → PySpark /
+> Glue *source generation*, published as [`pyspark-tools`](https://pypi.org/project/pyspark-tools/).
+> [SemyonSinchenko/pyspark-mcp](https://pypi.org/project/pyspark-mcp/) introspects a
+> running SparkSession. A deprecated `pyspark-mcp` console script remains here so
+> old configs keep working; it prints a warning, then starts this server.
+
 [![CI Pipeline](https://github.com/AnnasMazhar/pyspark_mcp/actions/workflows/pr-validation.yml/badge.svg)](https://github.com/AnnasMazhar/pyspark_mcp/actions/workflows/pr-validation.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -22,6 +28,9 @@ optimization — as an MCP server.
 - MERGE/PIVOT/CONNECT BY → transpiles to Spark SQL, provides DataFrame API guidance
 - Perfect 1:1 DataFrame API transpilation for all SQL — complex queries get Spark SQL + recommendations
 - It does **not** start a SparkSession, submit Glue jobs, or execute SQL
+- `optimize(mode="code")` returns **suggestions**; it does not rewrite your code
+- `glue_s3` is a **path heuristic** (no AWS call, no measured speedups)
+- It does **not** replace [SemyonSinchenko/pyspark-mcp](https://pypi.org/project/pyspark-mcp/) for live catalog/plans
 
 ## Why this vs calling sqlglot yourself
 
@@ -30,11 +39,11 @@ SQLGlot already transpiles dialects. This MCP adds three things around that kern
 ## Quick Start
 
 ```bash
-pip install -e .
-pyspark-mcp  # THE entry point (pyspark_tools:main)
+pip install pyspark-tools
+pyspark-tools
 ```
 
-`run_server.py` is a development convenience that inserts `sys.path` and prints startup banners. Prefer `pyspark-mcp` in configs and production.
+Zero-clone alternative: `uvx pyspark-tools`. `run_server.py` is a development convenience that inserts `sys.path` and prints startup banners. Prefer `pyspark-tools` in configs and production.
 
 ## Example: SQL → PySpark
 
@@ -46,22 +55,34 @@ WHERE o.status = 'paid'
 GROUP BY o.customer_id, c.name
 ```
 
-Call `convert` with `mode=sql`. Typical generated DataFrame API:
+Call `convert` with `mode=sql`. Captured converter output (`dialect=spark`):
 
 ```python
-from pyspark.sql.functions import col, sum as spark_sum
-
-orders_df = spark.table("orders").alias("o")
-customers_df = spark.table("customers").alias("c")
-result_df = (
-    orders_df.join(customers_df, col("o.customer_id") == col("c.id"), "inner")
-    .filter(col("o.status") == "paid")
-    .groupBy(col("o.customer_id"), col("c.name"))
-    .agg(spark_sum(col("o.amount")).alias("total"))
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import (
+    col, lit, when, count, sum, avg, min, max, countDistinct,
+    coalesce, concat, datediff, date_add, to_date,
+    row_number, rank, lag, lead,
 )
+from pyspark.sql.window import Window
+
+# Generated from SPARK SQL
+spark = SparkSession.builder.appName('SQLToPySpark').getOrCreate()
+
+# Load table: customers
+customers_df = spark.table('customers')
+# Load table: orders
+orders_df = spark.table('orders')
+
+# Main query
+result_df = (orders_df.alias('o')
+    .join(customers_df.alias('c'), (col('o.customer_id') == col('c.id')), 'inner')
+    .filter((col('o.status') == lit('paid')))
+    .groupBy(col('o.customer_id'), col('c.name'))
+    .select(col('o.customer_id'), col('c.name'), (sum(col('o.amount'))).alias('total')))
 ```
 
-Exact output depends on dialect detection and fallbacks; conversion tests in `tests/test_sql_conversion_fixes.py` pin the important constructs.
+Exact output depends on dialect detection and fallbacks; conversion tests in `tests/test_sql_conversion_fixes.py` pin the important constructs. Notebook-style `import *` / `show()` is opt-in via `style="notebook"` on the converter.
 
 ## MCP Configuration
 
@@ -75,7 +96,7 @@ Linux: `~/.config/Claude/claude_desktop_config.json`
 {
   "mcpServers": {
     "pyspark": {
-      "command": "pyspark-mcp",
+      "command": "pyspark-tools",
       "args": []
     }
   }
@@ -90,14 +111,18 @@ Add to `~/.hermes/config.yaml`:
 mcp:
   servers:
     pyspark:
-      command: pyspark-mcp
+      command: pyspark-tools
       enabled_tools: all
 ```
 
 ### Docker
 
+The image is **stdio only** (FastMCP over stdin/stdout). There is no HTTP server
+on port 8000. `docker compose up` is for local tests, not a health-checkable
+web service.
+
 ```bash
-docker compose up -d
+docker compose --profile test run --rm pyspark-tools-test
 ```
 
 ## Tools
@@ -115,7 +140,7 @@ convert(mode="batch_files", file_paths=["etl/job.sql"], output_dir="out")
 analyze(mode="sql_context", sql_content="SELECT * FROM orders o JOIN items i ON o.id = i.order_id")
 ```
 
-### `optimize` — code, joins, partitioning, comprehensive
+### `optimize` — suggestions only (does not rewrite)
 ```python
 optimize(mode="code", code="df.join(other, 'id').select('*')", optimization_level="standard")
 ```
@@ -135,7 +160,7 @@ glue_job(mode="template", job_name="orders_etl", sql_query="SELECT * FROM orders
 glue_schema(mode="detect", sample_data=[{"id": 1}], table_name="orders")
 ```
 
-### `glue_s3` — analyze, optimize, consolidate
+### `glue_s3` — path-heuristic layout advice (no AWS call)
 ```python
 glue_s3(mode="analyze", s3_location="s3://bucket/path", database_name="raw", table_name="orders")
 ```
@@ -182,8 +207,8 @@ This MCP can **read local files** (SQL, TXT, PDF) and, if the `[aws]` extra is i
 Run the server under a restricted OS account. Do not point it at secrets directories. Do not attach AWS credentials with write access unless you intend S3 reads via `s3_source` / `glue_s3`. Optional extras:
 
 ```bash
-pip install -e ".[aws]"    # boto3 for S3/Glue catalog helpers
-pip install -e ".[spark]"  # pyspark — not required at runtime; generated code only
+pip install "pyspark-tools[aws]"    # boto3 for S3/Glue catalog helpers
+pip install "pyspark-tools[spark]"  # pyspark — not required at runtime; generated code only
 ```
 
 ## Development

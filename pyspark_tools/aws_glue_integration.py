@@ -43,7 +43,7 @@ class GlueJobConfig:
     number_of_workers: int = 2
     max_retries: int = 0
     timeout: int = 2880  # 48 hours in minutes
-    glue_version: str = "4.0"
+    glue_version: str = "5.0"
 
 
 @dataclass
@@ -199,8 +199,21 @@ class AWSGlueIntegration:
             # Generate error handling and cleanup
             error_handling = self._generate_error_handling(config)
 
-            template = f"""{imports}
+            bookmark_warning = None
+            uses_spark_sql = bool(transformation_sql) or "spark.sql" in transformation
+            uses_df_read = not (config.use_dynamic_frame and source_table)
+            if config.include_bookmarking and (uses_spark_sql or uses_df_read):
+                bookmark_warning = (
+                    "Job bookmarks need DynamicFrame reads with transformation_ctx; "
+                    "spark.sql / DataFrame reads do not bookmark."
+                )
 
+            warning_comment = ""
+            if bookmark_warning:
+                warning_comment = f"\n# WARNING: {bookmark_warning}\n"
+
+            template = f"""{imports}
+{warning_comment}
 {job_init}
 
 try:
@@ -215,7 +228,7 @@ try:
 {error_handling}
 """
 
-            return {
+            result = {
                 "status": "success",
                 "job_name": config.job_name,
                 "job_type": config.job_type.value,
@@ -235,6 +248,9 @@ try:
                 ),
                 "glue_job_properties": self._get_glue_job_properties(config),
             }
+            if bookmark_warning:
+                result["warnings"] = [bookmark_warning]
+            return result
 
         except Exception as e:
             return {"status": "error", "message": str(e)}
@@ -251,12 +267,7 @@ try:
         ]
 
         if config.use_dynamic_frame:
-            imports.extend(
-                [
-                    "from awsglue.dynamicframe import DynamicFrame",
-                    "from awsglue import DynamicFrame",
-                ]
-            )
+            imports.append("from awsglue.dynamicframe import DynamicFrame")
 
         imports.extend(
             [
@@ -393,8 +404,9 @@ logger.info(f"Starting job: {args['JOB_NAME']}")"""
         .save(args['TARGET_PATH'])"""
 
     def _generate_error_handling(self, config: GlueJobConfig) -> str:
-        """Generate error handling and cleanup code."""
-        error_code = """except Exception as e:
+        """Generate error handling. ``job.commit()`` runs on success only."""
+        commit_line = "    job.commit()\n" if config.include_bookmarking else ""
+        error_code = commit_line + """except Exception as e:
     print(f"Job failed with error: {str(e)}")"""
 
         if config.enable_continuous_logging:
@@ -403,17 +415,7 @@ logger.info(f"Starting job: {args['JOB_NAME']}")"""
 
         error_code += """
     raise e
-    
-finally:"""
-
-        if config.include_bookmarking:
-            error_code += """
-    # Commit job for bookmarking
-    job.commit()"""
-        else:
-            error_code += """
-    # Job bookmarking disabled"""
-
+"""
         return error_code
 
     def _get_job_parameters(
@@ -1393,12 +1395,13 @@ glueContext.write_dynamic_frame.from_catalog(
             issues.extend(small_files_analysis["issues"])
             recommendations.extend(small_files_analysis["recommendations"])
 
-            # Generate estimated improvements
+            # Generate estimated improvements (path heuristic — not measured)
             estimated_improvements = {
-                "query_performance": "20-50% faster queries with proper partitioning",
-                "storage_cost": "10-30% reduction with optimal compression",
-                "scan_efficiency": "Up to 90% reduction in data scanned",
-                "file_operations": "50-80% fewer S3 operations with file consolidation",
+                "note": "path-heuristic, no AWS call — layout suggestions, not measured speedups",
+                "query_performance": "heuristic, not measured: partitioning may reduce scan volume",
+                "storage_cost": "heuristic, not measured: compression may reduce storage",
+                "scan_efficiency": "heuristic, not measured: partition pruning may reduce data scanned",
+                "file_operations": "heuristic, not measured: file consolidation may reduce S3 operations",
             }
 
             # Generate implementation code
@@ -1591,13 +1594,11 @@ try:
     )
     
     print(f"Small files consolidation completed successfully")
+    job.commit()
     
 except Exception as e:
     print(f"Consolidation job failed: {{str(e)}}")
     raise e
-    
-finally:
-    job.commit()
 """
 
             return {
