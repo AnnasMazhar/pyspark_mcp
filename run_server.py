@@ -2,8 +2,8 @@
 """
 Entry point for the PySpark Tools MCP Server.
 
-This script starts the FastMCP server for SQL to PySpark conversion
-with 14 consolidated tools (router pattern) for LLM context efficiency.
+Development convenience only. The supported CLI is ``pyspark-mcp``
+(``pyspark_tools:main`` via pyproject.toml).
 """
 
 import sys

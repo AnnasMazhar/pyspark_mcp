@@ -7,6 +7,8 @@ to improve overall coverage without directly testing MCP tool decorators.
 
 # Mock imports removed - not used in tests
 
+import tempfile
+
 import pytest
 
 from pyspark_tools.advanced_optimizer import AdvancedOptimizer
@@ -80,7 +82,9 @@ class TestServerComponentIntegration:
         """Test batch processor integration."""
         memory = MemoryManager(str(temp_db_path))
         converter = SQLToPySparkConverter()
-        batch_processor = BatchProcessor(memory, converter)
+        batch_processor = BatchProcessor(
+            memory, converter, allowed_root=str(temp_dir)
+        )
 
         # Create test SQL file
         sql_file = temp_dir / "test.sql"
@@ -98,7 +102,7 @@ class TestServerComponentIntegration:
     def test_duplicate_detector_integration(self, temp_db_path):
         """Test duplicate detector integration."""
         memory = MemoryManager(str(temp_db_path))
-        detector = DuplicateDetector(memory)
+        detector = DuplicateDetector(similarity_threshold=0.8)
 
         # Test pattern analysis
         code_samples = [
@@ -186,7 +190,9 @@ class TestServerErrorHandling:
         """Test batch processor error handling."""
         memory = MemoryManager(str(temp_db_path))
         converter = SQLToPySparkConverter()
-        batch_processor = BatchProcessor(memory, converter)
+        batch_processor = BatchProcessor(
+            memory, converter, allowed_root=tempfile.gettempdir()
+        )
 
         # Test with non-existent files
         result = batch_processor.process_files(["/nonexistent/file.sql"])
@@ -254,8 +260,10 @@ class TestServerWorkflows:
         # Initialize components
         memory = MemoryManager(str(temp_db_path))
         converter = SQLToPySparkConverter()
-        batch_processor = BatchProcessor(memory, converter)
-        detector = DuplicateDetector(memory)
+        batch_processor = BatchProcessor(
+            memory, converter, allowed_root=str(temp_dir)
+        )
+        detector = DuplicateDetector(similarity_threshold=0.8)
 
         # Create test SQL files
         sql_files = []

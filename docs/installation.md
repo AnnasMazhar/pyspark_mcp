@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.11+
 - Docker (recommended)
 - Git
 
@@ -47,10 +47,7 @@ python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies
-pip install -r requirements.txt
-
-# Install in development mode
-pip install -e .
+pip install -e ".[dev]"
 ```
 
 ### Run the Server
@@ -140,7 +137,7 @@ brew install python@3.10
 pip cache purge
 
 # Reinstall dependencies
-pip install --force-reinstall -r requirements.txt
+pip install --force-reinstall -e ".[dev]"
 
 # If SQLGlot issues
 pip install --upgrade sqlglot

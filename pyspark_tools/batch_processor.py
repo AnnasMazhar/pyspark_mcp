@@ -113,6 +113,7 @@ class BatchProcessor:
         sql_converter: Optional[SQLToPySparkConverter] = None,
         max_workers: int = 4,
         base_output_dir: str = "output",
+        allowed_root: Optional[str] = None,
     ):
         """
         Initialize the batch processor.
@@ -122,11 +123,14 @@ class BatchProcessor:
             sql_converter: SQL to PySpark converter
             max_workers: Maximum number of concurrent workers
             base_output_dir: Base directory for output files
+            allowed_root: Filesystem root batch I/O is allowed under (default: cwd)
         """
         self.memory_manager = memory_manager or MemoryManager()
         self.sql_converter = sql_converter or SQLToPySparkConverter()
-        self.file_handler = FileHandler()
-        self.output_manager = OutputManager(base_output_dir)
+        self.file_handler = FileHandler(base_directory=allowed_root or os.getcwd())
+        self.output_manager = OutputManager(
+            base_output_dir, allowed_root=allowed_root or os.getcwd()
+        )
         self.max_workers = max_workers
 
         # Job tracking

@@ -43,12 +43,12 @@ def memory_manager(temp_db_path: Path) -> Generator[MemoryManager, None, None]:
 
 @pytest.fixture
 def batch_processor(memory_manager: MemoryManager) -> BatchProcessor:
-    return BatchProcessor(memory_manager)
+    return BatchProcessor(memory_manager, allowed_root=tempfile.gettempdir())
 
 
 @pytest.fixture
-def duplicate_detector(memory_manager: MemoryManager) -> DuplicateDetector:
-    return DuplicateDetector(memory_manager)
+def duplicate_detector() -> DuplicateDetector:
+    return DuplicateDetector(similarity_threshold=0.8)
 
 
 @pytest.fixture

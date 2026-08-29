@@ -273,8 +273,13 @@ class PDFExtractor:
                 "Neither pypdf nor pdfplumber is available. Please install one of them."
             )
 
-    def extract_sql_from_pdf(self, pdf_path: str) -> List[ExtractedSQL]:
+    def extract_sql_from_pdf(self, pdf_path: str, base_path: str = None) -> List[ExtractedSQL]:
         """Extract SQL queries from a PDF file."""
+        allowed = base_path or os.getcwd()
+        if not _is_safe_path(pdf_path, allowed):
+            raise ValueError(
+                f"PDF path is outside the allowed root ({allowed}): {pdf_path}"
+            )
         if not os.path.exists(pdf_path):
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
 
@@ -338,7 +343,11 @@ class PDFExtractor:
 
 
 def _is_safe_path(file_path: str, base_path: str = None) -> bool:
-    """Check if a file path is safe to access (prevents path traversal attacks)."""
+    """Check if a file path is safe to access (prevents path traversal attacks).
+
+    Resolved paths must sit under an allowed root. Default allow-root is the
+    current working directory; pass ``base_path`` to widen or relocate it.
+    """
     try:
         # Resolve the path to handle .. and symlinks
         resolved_path = Path(file_path).resolve()
@@ -354,14 +363,14 @@ def _is_safe_path(file_path: str, base_path: str = None) -> bool:
                 logger.warning(f"Blocked access to system directory: {resolved_path}")
                 return False
 
-        # If base_path is provided, ensure the file is within it
-        if base_path:
-            base_resolved = Path(base_path).resolve()
-            try:
-                resolved_path.relative_to(base_resolved)
-            except ValueError:
-                logger.warning(f"Path traversal attempt detected: {file_path}")
-                return False
+        allowed_root = Path(base_path).resolve() if base_path else Path.cwd().resolve()
+        try:
+            resolved_path.relative_to(allowed_root)
+        except ValueError:
+            logger.warning(
+                f"Path is outside allowed root {allowed_root}: {file_path}"
+            )
+            return False
 
         return True
     except (OSError, ValueError) as e:
@@ -406,7 +415,7 @@ class FileHandler:
     def __init__(self, base_directory: str = None):
         self.sql_extractor = SQLQueryExtractor()
         self.pdf_extractor = None
-        self.base_directory = base_directory
+        self.base_directory = base_directory or os.getcwd()
 
         # Initialize PDF extractor only if libraries are available
         if PYPDF2_AVAILABLE or PDFPLUMBER_AVAILABLE:
@@ -585,9 +594,12 @@ class FileHandler:
 class OutputManager:
     """Utility class for organizing and naming output files."""
 
-    def __init__(self, base_output_dir: str = "output"):
+    def __init__(self, base_output_dir: str = "output", allowed_root: str = None):
         self.base_output_dir = Path(base_output_dir)
         self.base_output_dir.mkdir(parents=True, exist_ok=True)
+        # Default allow-root is the parent of the output dir (cwd when
+        # base_output_dir is a relative "output/" folder).
+        self.allowed_root = allowed_root or str(self.base_output_dir.resolve().parent)
 
     def generate_output_filename(
         self, source_file: str, query_index: int = 0, timestamp: bool = True
@@ -658,7 +670,7 @@ class OutputManager:
     ) -> None:
         """Save a SQL query to a file with optional metadata."""
         # Security check: validate output path
-        if not _is_safe_path(str(output_path)):
+        if not _is_safe_path(str(output_path), self.allowed_root):
             raise ValueError(f"Unsafe output path: {output_path}")
 
         # Limit query size to prevent resource exhaustion
@@ -695,7 +707,7 @@ class OutputManager:
     ) -> None:
         """Save PySpark code to a file with optional metadata."""
         # Security check: validate output path
-        if not _is_safe_path(str(output_path)):
+        if not _is_safe_path(str(output_path), self.allowed_root):
             raise ValueError(f"Unsafe output path: {output_path}")
 
         # Limit code size to prevent resource exhaustion
@@ -778,10 +790,10 @@ class OutputManager:
 
 
 # Convenience functions for common operations
-def extract_sql_from_pdf(pdf_path: str) -> List[ExtractedSQL]:
+def extract_sql_from_pdf(pdf_path: str, base_path: str = None) -> List[ExtractedSQL]:
     """Convenience function to extract SQL from a PDF file."""
     extractor = PDFExtractor()
-    return extractor.extract_sql_from_pdf(pdf_path)
+    return extractor.extract_sql_from_pdf(pdf_path, base_path=base_path)
 
 
 def extract_sql_from_text(text: str, source_file: str = "") -> List[ExtractedSQL]:
@@ -791,17 +803,21 @@ def extract_sql_from_text(text: str, source_file: str = "") -> List[ExtractedSQL
 
 
 def process_sql_files(
-    file_paths: Union[str, List[str]], output_dir: str = "output"
+    file_paths: Union[str, List[str]],
+    output_dir: str = "output",
+    base_path: str = None,
 ) -> List[FileProcessingResult]:
-    """Convenience function to process SQL files."""
+    """Convenience function to process SQL files.
+
+    Paths must resolve under ``base_path`` (default: cwd). When ``file_paths``
+    is a directory, that directory is the allow-root unless ``base_path`` is set.
+    """
+    _ = output_dir
     if isinstance(file_paths, str):
         if os.path.isdir(file_paths):
-            # Process directory
-            handler = FileHandler()
+            handler = FileHandler(base_directory=base_path or file_paths)
             return handler.process_directory(file_paths)
-        else:
-            # Process single file
-            file_paths = [file_paths]
+        file_paths = [file_paths]
 
-    handler = FileHandler()
+    handler = FileHandler(base_directory=base_path or os.getcwd())
     return handler.process_files(file_paths)

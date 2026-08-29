@@ -17,7 +17,7 @@ show_missing = True
 precision = 1
 
 # Lower the failure threshold
-fail_under = 25
+fail_under = 60
 
 [html]
 directory = htmlcov

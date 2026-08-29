@@ -85,11 +85,11 @@ def convert(
 
         if include_glue_template:
             return _s.complete_sql_conversion(
-                sql_query=sql_query,
-                table_info=table_info,
-                dialect=dialect,
+                sql_content=sql_query,
                 optimization_level=optimization_level,
                 include_glue_template=True,
+                client_context=table_info,
+                dialect=dialect,
             )
         return _s.convert_sql_to_pyspark(
             sql_query=sql_query,
@@ -200,13 +200,30 @@ def analyze(
         )
 
     elif mode == "workspace":
-        content = sql_content or ""
+        workspace_files = []
+        if sql_content:
+            workspace_files.append(
+                {
+                    "path": f"{workspace_name or 'workspace'}.sql",
+                    "content": sql_content,
+                }
+            )
+        if workspace_path:
+            workspace_files.append(
+                {
+                    "path": workspace_path,
+                    "content": sql_content or "",
+                }
+            )
+        if not workspace_files:
+            return {
+                "status": "error",
+                "message": "sql_content or workspace_path required for mode='workspace'",
+            }
         return _s.workspace_analysis(
-            sql_content=content,
-            workspace_path=workspace_path or "",
+            workspace_files=workspace_files,
+            analysis_scope="sql_optimization",
             include_project_structure=include_project_structure,
-            workspace_name=workspace_name or "pyspark-workspace",
-            output_dir=".",
         )
 
     else:
@@ -416,16 +433,16 @@ def glue_job(
 
     if mode == "template":
         return _s.generate_aws_glue_job_template(
-            sql_query=sql_query or "",
             job_name=job_name or "glue-job",
-            source_database=source_database or "",
-            source_table=source_table or "",
-            target_database=target_database or "",
-            target_table=target_table or "",
-            output_dir=output_dir or ".",
             source_format=source_format,
             target_format=target_format,
             include_bookmarking=include_bookmarking,
+            source_database=source_database or None,
+            source_table=source_table or None,
+            target_database=target_database or None,
+            target_table=target_table or None,
+            transformation_sql=sql_query or None,
+            output_dir=output_dir,
             template_type=template_type,
             script_name=script_name,
         )
@@ -823,6 +840,7 @@ def refactor(
         return _s.generate_utility_functions(
             code_samples=code_samples,
             patterns=patterns,
+            min_usage_count=2,
         )
 
     elif mode == "pipeline":
@@ -835,12 +853,13 @@ def refactor(
             )
         else:
             # Fall back to project structure generation
+            contents = [sql_content] if sql_content else []
             return _s.generate_project_structure(
-                sql_content=sql_content or "",
-                workspace_name=workspace_name or "pyspark-workspace",
-                workspace_path=workspace_path or ".",
-                output_dir=output_dir or ".",
-                include_glue_template=include_glue_template,
+                project_name=workspace_name or "pyspark-workspace",
+                sql_contents=contents,
+                target_platform="aws_glue" if include_glue_template else "spark",
+                workspace_path=workspace_path,
+                output_dir=output_dir,
                 dialect=dialect,
                 include_batch_processing=include_batch_processing,
                 include_visualization=include_visualization,
@@ -902,9 +921,10 @@ def search(
         return _s.get_stored_patterns(min_usage_count=min_usage_count, limit=limit)
 
     elif mode == "context":
-        if conversion_id:
-            return _s.get_context(conversion_id=conversion_id)
-        return {"status": "error", "message": "conversion_id required for mode='context'"}
+        lookup_key = conversion_id or key
+        if lookup_key:
+            return _s.get_context(key=lookup_key)
+        return {"status": "error", "message": "conversion_id or key required for mode='context'"}
 
     else:
         valid = "conversions, patterns, context"
@@ -950,18 +970,18 @@ def context(
     if mode == "store":
         if not conversion_id or context_data is None:
             return {"status": "error", "message": "conversion_id and context_data required for mode='store'"}
-        return _s.store_context(conversion_id=conversion_id, context_data=context_data)
+        return _s.store_context(key=conversion_id, value=context_data)
 
     elif mode == "get":
         if not conversion_id:
             return {"status": "error", "message": "conversion_id required for mode='get'"}
-        return _s.get_context(conversion_id=conversion_id)
+        return _s.get_context(key=conversion_id)
 
     elif mode == "assist":
         if selected_text:
             return _s.process_editor_selection(selected_text=selected_text)
         if sql_query:
-            return _s.realtime_sql_assistance(sql_query=sql_query)
+            return _s.realtime_sql_assistance(current_sql=sql_query)
         return {"status": "error", "message": "sql_query or selected_text required for mode='assist'"}
 
     else:
