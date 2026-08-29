@@ -94,6 +94,8 @@ test_mcp_server_comprehensive.py
 # Test Query Files (should not be committed)
 test_queries/
 *.sql
+!examples/*.sql
+!examples/**/*.sql
 
 # Security Sensitive Files
 *.key
@@ -133,6 +135,8 @@ data/
 datasets/
 *.csv
 *.json
+!tests/corpus/*.json
+!tests/corpus/**/*.json
 *.xml
 *.parquet
 *.avro
