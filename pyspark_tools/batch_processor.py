@@ -12,6 +12,7 @@ This module provides:
 import json
 import logging
 import os
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -51,6 +52,9 @@ class ConversionResult:
     processing_time: float = 0.0
     source_file: str = ""
     query_index: int = 0
+    fallback_used: bool = False
+    dialect_used: str = "spark"
+    output_path: str = ""
 
 
 @dataclass
@@ -311,6 +315,7 @@ class BatchProcessor:
 
             # Create batch summary file
             self._create_batch_summary(result, output_path)
+            self._write_conversion_report(result, output_path)
 
             logger.info(
                 f"Batch job {job_name} completed: {progress.successful_files}/{len(file_paths)} files successful"
@@ -458,6 +463,18 @@ class BatchProcessor:
             if not file_result.success:
                 return file_result, []
 
+            if not file_result.extracted_queries:
+                raw = Path(file_path).read_text(encoding="utf-8", errors="ignore")
+                if re.search(r"\b(SELECT|WITH)\b", raw, re.I):
+                    file_result.extracted_queries.append(
+                        ExtractedSQL(
+                            query=raw.strip(),
+                            source_file=file_path,
+                            line_number=1,
+                            confidence=0.4,
+                        )
+                    )
+
             # Convert each extracted query
             conversion_results = []
 
@@ -537,10 +554,13 @@ class BatchProcessor:
                 sql_query=extracted_sql.query,
                 pyspark_code=pyspark_code,
                 optimizations=optimizations,
-                success=True,
+                success=bool(conversion_result.success),
                 processing_time=processing_time,
                 source_file=source_file,
                 query_index=query_index,
+                fallback_used=bool(conversion_result.fallback_used),
+                dialect_used=conversion_result.dialect_used or "spark",
+                output_path=str(output_file_path),
             )
 
         except Exception as e:
@@ -639,6 +659,36 @@ class BatchProcessor:
                 )
 
         return errors
+
+    def build_conversion_report(self, result: BatchResult) -> Dict[str, Any]:
+        """Summarize a batch job as converted / fallback / errors / files."""
+        files = []
+        errors = list(result.error_summary or [])
+        for conv in result.conversion_results:
+            files.append(
+                {
+                    "source": conv.source_file,
+                    "dialect": conv.dialect_used,
+                    "dialect_used": conv.dialect_used,
+                    "fallback_used": bool(conv.fallback_used),
+                    "output_path": conv.output_path,
+                    "success": bool(conv.success),
+                }
+            )
+        converted = len([c for c in result.conversion_results if c.success])
+        fallback = len([c for c in result.conversion_results if c.fallback_used])
+        return {
+            "converted": converted,
+            "fallback": fallback,
+            "errors": errors,
+            "files": files,
+        }
+
+    def _write_conversion_report(self, result: BatchResult, output_path: Path) -> None:
+        report = self.build_conversion_report(result)
+        path = Path(output_path) / "report.json"
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, default=str)
 
     def _create_batch_summary(self, result: BatchResult, output_path: Path) -> None:
         """Create comprehensive batch summary file."""
