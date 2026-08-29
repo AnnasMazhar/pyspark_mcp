@@ -340,7 +340,7 @@ def complete_sql_conversion(
         # 4. Review for best practices
         review_result = _review_pyspark_code_internal(
             code=optimization_result.get(
-                "optimized_code", conversion_result["pyspark_code"]
+                "original_code", conversion_result["pyspark_code"]
             ),
             focus_areas=["aws_glue", "performance", "best_practice"],
         )
@@ -371,7 +371,7 @@ def complete_sql_conversion(
         return {
             "status": "success",
             "pyspark_code": optimization_result.get(
-                "optimized_code", conversion_result["pyspark_code"]
+                "original_code", conversion_result["pyspark_code"]
             ),
             "performance_potential": performance_potential,
             "aws_glue_compatible": review_result.get("summary", {}).get(

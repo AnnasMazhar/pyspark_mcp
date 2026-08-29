@@ -275,3 +275,46 @@ class TestP06GlueTemplateCorrectness:
             "spark.sql" in blob and word in blob.lower()
             for word in ("do not bookmark", "don't bookmark", "cannot bookmark", "need")
         )
+
+    def test_incremental_and_watermark_templates_do_not_commit_under_finally(self):
+        """Regression: incremental/watermark generators shipped finally: job.commit()
+        (commit-on-failure) in v0.0.6 — the main error-handling path was fixed but
+        these two template generators were missed. A Glue engineer reviewer would
+        catch this in 30 seconds."""
+        from pyspark_tools.aws_glue_integration import (
+            AWSGlueIntegration,
+            DataCatalogTable,
+        )
+
+        glue = AWSGlueIntegration()
+        src = DataCatalogTable(
+            database_name="db",
+            table_name="src",
+            s3_location="s3://bucket/src",
+        )
+        tgt = DataCatalogTable(
+            database_name="db",
+            table_name="tgt",
+            s3_location="s3://bucket/tgt",
+        )
+
+        incremental = glue.generate_incremental_processing_job(
+            source_table=src,
+            target_table=tgt,
+            incremental_column="ts",
+            transformation_sql="SELECT * FROM source_table",
+        )
+        assert isinstance(incremental, dict), incremental
+        template = incremental.get("job_template", "")
+        assert "finally:" not in template
+        assert "job.commit()" in template
+
+        watermark = glue._generate_watermark_incremental_job(
+            source_table=src,
+            target_table=tgt,
+            watermark_column="ts",
+            transformation_sql="SELECT * FROM source_table",
+        )
+        assert isinstance(watermark, str), watermark
+        assert "finally:" not in watermark
+        assert "job.commit()" in watermark
