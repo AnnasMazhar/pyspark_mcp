@@ -2310,12 +2310,12 @@ try:
     
     print(f"Processed {{transformed_df.count()}} records")
     
+    # Commit job for bookmarking on success only
+    job.commit()
+    
 except Exception as e:
     print(f"Incremental job failed: {{str(e)}}")
     raise e
-    
-finally:
-    job.commit()
 """
 
     def _generate_watermark_incremental_job(
@@ -2416,12 +2416,12 @@ try:
     else:
         print("No new data to process")
     
+    # Commit job for bookmarking on success only
+    job.commit()
+    
 except Exception as e:
     print(f"Watermark job failed: {{str(e)}}")
     raise e
-    
-finally:
-    job.commit()
 """
 
     def _generate_bookmark_incremental_job(
