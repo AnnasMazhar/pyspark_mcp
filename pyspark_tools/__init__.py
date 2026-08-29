@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 
-__version__ = "0.0.7"
+__version__ = "0.0.8"
 
 _DEPRECATED_CLI_WARNING = (
     "this is pyspark-tools (SQL→PySpark codegen), not "
