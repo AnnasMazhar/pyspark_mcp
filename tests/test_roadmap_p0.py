@@ -318,3 +318,62 @@ class TestP06GlueTemplateCorrectness:
         assert isinstance(watermark, str), watermark
         assert "finally:" not in watermark
         assert "job.commit()" in watermark
+
+        bookmark = glue._generate_bookmark_incremental_job(
+            source_table=src,
+            target_table=tgt,
+            bookmark_column="ts",
+            transformation_sql="SELECT * FROM source_table",
+        )
+        assert isinstance(bookmark, str), bookmark
+        assert "finally:" not in bookmark
+        assert "job.commit()" in bookmark
+
+    def test_no_template_generator_commits_under_finally(self):
+        """Sweep: no generated Glue template anywhere may contain finally: job.commit().
+        Catches generators missed by per-function tests (v0.0.6 shipped 3 such gaps
+        across the error-handling/incremental/watermark/bookmark families)."""
+        import inspect
+
+        from pyspark_tools import aws_glue_integration as agi
+        from pyspark_tools.aws_glue_integration import (
+            AWSGlueIntegration,
+            DataCatalogTable,
+        )
+
+        glue = AWSGlueIntegration()
+        src = DataCatalogTable(
+            database_name="db",
+            table_name="src",
+            s3_location="s3://bucket/src",
+        )
+        tgt = DataCatalogTable(
+            database_name="db",
+            table_name="tgt",
+            s3_location="s3://bucket/tgt",
+        )
+        default_args = {
+            "generate_incremental_processing_job": dict(
+                source_table=src, target_table=tgt, incremental_column="ts",
+                transformation_sql="SELECT * FROM source_table",
+            ),
+            "_generate_watermark_incremental_job": dict(
+                source_table=src, target_table=tgt, watermark_column="ts",
+                transformation_sql="SELECT * FROM source_table",
+            ),
+            "_generate_bookmark_incremental_job": dict(
+                source_table=src, target_table=tgt, bookmark_column="ts",
+                transformation_sql="SELECT * FROM source_table",
+            ),
+        }
+        bad = []
+        for name, fn in inspect.getmembers(glue, inspect.ismethod):
+            if name not in default_args:
+                continue
+            out = fn(**default_args[name])
+            template = out.get("job_template", out) if isinstance(out, dict) else out
+            if not isinstance(template, str):
+                continue
+            if "finally:" in template and "job.commit()" in template:
+                bad.append(name)
+        assert bad == [], f"generators still committing under finally: {bad}"

@@ -2500,14 +2500,13 @@ try:
     else:
         print("No new data to process based on job bookmark")
     
+    # Commit job for bookmarking on success only
+    job.commit()
+    print("Job bookmark committed successfully")
+    
 except Exception as e:
     print(f"Bookmark job failed: {{str(e)}}")
     raise e
-    
-finally:
-    # Commit job bookmark
-    job.commit()
-    print("Job bookmark committed successfully")
 """
 
     def _generate_incremental_monitoring_setup(self) -> Dict[str, Any]:
