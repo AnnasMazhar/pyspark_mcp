@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import Any, Dict, Generator
 from unittest.mock import Mock, patch
 
+# Isolate server.py's module-level MemoryManager from ~/.cache/mcp/memory.sqlite
+# BEFORE any pyspark_tools import (that manager is constructed at import time).
+os.environ["PYSPARK_TOOLS_DB_PATH"] = os.path.join(
+    tempfile.gettempdir(), f"pytest-memory-{os.getpid()}.sqlite"
+)
+
 import pytest
 
 from pyspark_tools.sql_converter import SQLToPySparkConverter
@@ -43,12 +49,12 @@ def memory_manager(temp_db_path: Path) -> Generator[MemoryManager, None, None]:
 
 @pytest.fixture
 def batch_processor(memory_manager: MemoryManager) -> BatchProcessor:
-    return BatchProcessor(memory_manager)
+    return BatchProcessor(memory_manager, allowed_root=tempfile.gettempdir())
 
 
 @pytest.fixture
-def duplicate_detector(memory_manager: MemoryManager) -> DuplicateDetector:
-    return DuplicateDetector(memory_manager)
+def duplicate_detector() -> DuplicateDetector:
+    return DuplicateDetector(similarity_threshold=0.8)
 
 
 @pytest.fixture

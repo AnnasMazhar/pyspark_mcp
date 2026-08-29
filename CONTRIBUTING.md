@@ -19,16 +19,15 @@ We use trunk-based development with short-lived feature branches:
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/pyspark_mcp.git
+git clone https://github.com/AnnasMazhar/pyspark_mcp.git
 cd pyspark_mcp
 
 # Create a virtual environment
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-# Install dependencies
-pip install -r requirements.txt
-pip install -e .
+# Install package + dev tools
+pip install -e ".[dev]"
 
 # Install development tools
 pip install black isort flake8 pytest pytest-cov
@@ -260,8 +259,7 @@ deactivate
 rm -rf .venv
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-pip install -e .
+pip install -e ".[dev]"
 pytest tests/
 ```
 

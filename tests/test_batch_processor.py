@@ -74,6 +74,7 @@ class TestBatchProcessor:
             sql_converter=sql_converter,
             max_workers=2,
             base_output_dir=output_dir,
+            allowed_root=tempfile.gettempdir(),
         )
 
     def test_batch_processor_initialization(self, batch_processor):

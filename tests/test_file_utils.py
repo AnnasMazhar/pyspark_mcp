@@ -157,6 +157,7 @@ class TestFileHandler:
 
     def test_find_sql_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:
+            handler = FileHandler(base_directory=temp_dir)
             # Create test files
             (Path(temp_dir) / "query1.sql").touch()
             (Path(temp_dir) / "query2.txt").touch()
@@ -169,20 +170,21 @@ class TestFileHandler:
             (sub_dir / "query3.sql").touch()
 
             # Test recursive search
-            files = self.handler.find_sql_files(temp_dir, recursive=True)
+            files = handler.find_sql_files(temp_dir, recursive=True)
             assert len(files) == 4  # 3 supported files + 1 in subdir
 
             # Test non-recursive search
-            files = self.handler.find_sql_files(temp_dir, recursive=False)
+            files = handler.find_sql_files(temp_dir, recursive=False)
             assert len(files) == 3  # Only files in root directory
 
     def test_process_sql_file(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".sql", delete=False) as f:
             f.write("SELECT * FROM users WHERE active = true;")
             f.flush()
+            handler = FileHandler(base_directory=tempfile.gettempdir())
 
             try:
-                result = self.handler.process_file(f.name)
+                result = handler.process_file(f.name)
 
                 assert result.success
                 assert len(result.extracted_queries) >= 1
@@ -202,9 +204,10 @@ class TestFileHandler:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".xyz", delete=False) as f:
             f.write("some content")
             f.flush()
+            handler = FileHandler(base_directory=tempfile.gettempdir())
 
             try:
-                result = self.handler.process_file(f.name)
+                result = handler.process_file(f.name)
 
                 assert not result.success
                 assert "Unsupported file extension" in result.error_message
@@ -330,7 +333,9 @@ class TestConvenienceFunctions:
             f.flush()
 
             try:
-                results = process_sql_files(f.name)
+                results = process_sql_files(
+                    f.name, base_path=tempfile.gettempdir()
+                )
 
                 assert len(results) == 1
                 assert results[0].success
@@ -369,11 +374,14 @@ class TestSecurityFeatures:
         for path in dangerous_paths:
             assert not _is_safe_path(path), f"Dangerous path should be blocked: {path}"
 
-        # Test safe paths
+        # Test safe paths (relative to cwd)
         safe_paths = ["test.sql", "./data/query.sql", "subdir/file.txt"]
 
         for path in safe_paths:
             assert _is_safe_path(path), f"Safe path should be allowed: {path}"
+
+        # Paths outside cwd (and not under an explicit base) are rejected
+        assert not _is_safe_path("/tmp/not-under-cwd.sql")
 
     def test_filename_sanitization(self):
         """Test filename sanitization."""

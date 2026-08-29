@@ -16,22 +16,17 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy requirements first for better Docker layer caching
-COPY requirements.txt .
-
-# Install Python dependencies as root, then switch to non-root user
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir --root-user-action=ignore -r requirements.txt
-
-# Copy essential configuration files
+# Copy package metadata then sources so pip can install from pyproject.toml
 COPY pyproject.toml .
 COPY .flake8 .
-
-# Copy application code (only essential files)
 COPY pyspark_tools/ ./pyspark_tools/
 COPY scripts/ ./scripts/
 COPY run_server.py .
-COPY test.py .
+COPY README.md LICENSE ./
+
+# Install Python dependencies as root, then switch to non-root user
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir --root-user-action=ignore .
 
 # NOTE: Do NOT copy tests into the runtime image for production builds.
 # Tests are heavy and should be run in test images only.
@@ -54,15 +49,14 @@ ENV PYSPARK_TOOLS_DB_PATH=/data/memory.sqlite \
 
 # Basic validation: recursively check Python syntax (lightweight)
 # Move comprehensive testing to CI/test images.
-RUN echo "🔍 Running basic validation..." && \
-    # recursively compile python files to check syntax
-    find pyspark_tools -name '*.py' -print0 | xargs -0 -n1 python -m py_compile || (echo "❌ Syntax check failed" && exit 1) && \
+RUN echo "Running basic validation..." && \
+    find pyspark_tools -name '*.py' -print0 | xargs -0 -n1 python -m py_compile || (echo "Syntax check failed" && exit 1) && \
     python -m py_compile run_server.py && \
-    echo "✅ Basic syntax validation passed"
+    echo "Basic syntax validation passed"
 
 # Expose port and use a small healthcheck script (scripts/healthcheck.py)
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python /app/scripts/healthcheck.py
 
-CMD ["python", "run_server.py"]
+CMD ["python", "-m", "pyspark_tools"]

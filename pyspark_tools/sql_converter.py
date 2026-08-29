@@ -2,22 +2,47 @@
 
 import logging
 import re
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import sqlglot
 
 
-@dataclass
-class ConversionResult:
-    """Result of SQL to PySpark conversion."""
+class ConversionResult(dict):
+    """Result of SQL to PySpark conversion.
 
-    pyspark_code: str
-    optimizations: List[str]
-    warnings: List[str]
-    dialect_used: str
-    complex_constructs: List[str]
-    fallback_used: bool
+    Dict subclass so MCP/CI callers can treat the result as a mapping
+    (``isinstance(result, dict)``, ``"pyspark_code" in result``) while
+    existing tests keep using attribute access (``result.pyspark_code``).
+    """
+
+    def __init__(
+        self,
+        pyspark_code: str,
+        optimizations: List[str],
+        warnings: List[str],
+        dialect_used: str,
+        complex_constructs: List[str],
+        fallback_used: bool,
+        success: bool = True,
+    ):
+        super().__init__(
+            pyspark_code=pyspark_code,
+            optimizations=optimizations,
+            warnings=warnings,
+            dialect_used=dialect_used,
+            complex_constructs=complex_constructs,
+            fallback_used=fallback_used,
+            success=success,
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        self[name] = value
 
 
 class SQLToPySparkConverter:
@@ -182,7 +207,7 @@ class SQLToPySparkConverter:
                             complex_constructs=complex_constructs,
                             fallback_used=True,
                         )
-                    except:
+                    except Exception:
                         continue
 
             # Final fallback to pattern-based conversion
@@ -1074,10 +1099,6 @@ class SQLToPySparkConverter:
             self.logger.warning(f"Error converting expression: {str(e)}")
             return f"col('{str(expr)}')".replace('"', "")
 
-    def _extract_joins(self, parsed_sql, dialect: str) -> List[str]:
-        self.logger.warning(f"Error converting expression {expr}: {str(e)}")
-        return f"col('{str(expr)}')"
-
     def _convert_function_calls(self, expr_str: str, dialect: str) -> str:
         """Convert dialect-specific function calls to PySpark equivalents."""
         if dialect not in self.function_mappings:
@@ -1357,7 +1378,7 @@ class SQLToPySparkConverter:
                             else table_name
                         )
                         tables.append((table_name, table_alias))
-        except:
+        except Exception:
             pass
         return tables
 
@@ -1369,7 +1390,7 @@ class SQLToPySparkConverter:
                 for table in parsed_sql.find_all(sqlglot.expressions.Table):
                     if hasattr(table, "name"):
                         tables.add(table.name)
-        except:
+        except Exception:
             pass
         return sorted(list(tables))
 
@@ -1381,7 +1402,7 @@ class SQLToPySparkConverter:
             ):
                 where_expr = parsed_sql.find(sqlglot.expressions.Where)
                 return self._convert_expression_to_filter(where_expr.this)
-        except:
+        except Exception:
             pass
         return None
 
@@ -1450,8 +1471,11 @@ class SQLToPySparkConverter:
             # Handle IS NULL / IS NOT NULL
             if isinstance(expr, sqlglot.expressions.Is):
                 left = self._convert_filter_operand(expr.this)
-                # Check if comparing to NULL
+                # Check if comparing to NULL. sqlglot 30+ puts IS NOT NULL
+                # on the Is node itself (negate=True), not as Not(Is(...)).
                 if isinstance(expr.expression, sqlglot.expressions.Null):
+                    if expr.args.get("negate"):
+                        return f"{left}.isNotNull()"
                     return f"{left}.isNull()"
                 return f"({left} == {self._convert_filter_operand(expr.expression)})"
 
@@ -1589,7 +1613,7 @@ class SQLToPySparkConverter:
                                 col_name = col_name.strip('"').strip("'")
                                 columns.append(f"col('{col_name}')")
                                 continue
-                        except:
+                        except Exception:
                             pass
 
                     if isinstance(expr, sqlglot.expressions.Column):
@@ -1609,7 +1633,7 @@ class SQLToPySparkConverter:
                         col_str = str(expr).strip('"').strip("'")
                         columns.append(f"col('{col_str}')")
                 return ", ".join(columns)
-        except:
+        except Exception:
             pass
         return None
 
@@ -1653,7 +1677,7 @@ class SQLToPySparkConverter:
 
                         order_cols.append(col_ref)
                 return ", ".join(order_cols)
-        except:
+        except Exception:
             pass
         return None
 

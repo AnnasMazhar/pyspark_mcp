@@ -16,81 +16,44 @@ services:
       - PYTHONUNBUFFERED=1
     restart: unless-stopped
 
-  # Unified test service using single entry point
+  # Test service
   pyspark-tools-test:
     build: .
     container_name: pyspark-tools-test
     volumes:
       - ./tests:/app/tests
       - ./pyspark_tools:/app/pyspark_tools
-      - ./test.py:/app/test.py
       - ./coverage_reports:/app/coverage_reports
       - pyspark_test_data:/data
     environment:
       - PYTHONPATH=/app
       - PYSPARK_TOOLS_DB_PATH=/data/test.sqlite
-    command: python test.py --ci
+    command: python -m pytest tests/ -q
     profiles:
       - test
 
-  # Fast tests for development
   test-fast:
     build: .
     container_name: test-fast
     volumes:
       - ./tests:/app/tests
       - ./pyspark_tools:/app/pyspark_tools
-      - ./test.py:/app/test.py
     environment:
       - PYTHONPATH=/app
-    command: python test.py --fast
+    command: python -m pytest tests/ -q -m fast
     profiles:
       - test
 
-  # Performance tests
-  test-performance:
-    build: .
-    container_name: test-performance
-    volumes:
-      - ./tests:/app/tests
-      - ./pyspark_tools:/app/pyspark_tools
-      - ./test.py:/app/test.py
-      - pyspark_test_data:/data
-    environment:
-      - PYTHONPATH=/app
-      - PYSPARK_TOOLS_DB_PATH=/data/perf_test.sqlite
-    command: python test.py --performance
-    profiles:
-      - test
-      - performance
-
-  # Security tests
-  test-security:
-    build: .
-    container_name: test-security
-    volumes:
-      - ./tests:/app/tests
-      - ./pyspark_tools:/app/pyspark_tools
-      - ./test.py:/app/test.py
-    environment:
-      - PYTHONPATH=/app
-    command: python test.py --security
-    profiles:
-      - test
-      - security
-
-  # Coverage tests
   test-coverage:
     build: .
     container_name: test-coverage
     volumes:
       - ./tests:/app/tests
       - ./pyspark_tools:/app/pyspark_tools
-      - ./test.py:/app/test.py
       - ./coverage_reports:/app/coverage_reports
     environment:
       - PYTHONPATH=/app
-    command: python test.py --coverage
+    command: python -m pytest tests/ --cov=pyspark_tools --cov-fail-under=60
     profiles:
       - test
       - coverage

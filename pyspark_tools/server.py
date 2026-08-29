@@ -99,12 +99,31 @@ def _optimize_pyspark_code_internal(
 ) -> Dict[str, Any]:
     """Internal optimization function without MCP decoration."""
     try:
-        result = advanced_optimizer.optimize(code, optimization_level)
+        recommendations = advanced_optimizer.generate_comprehensive_recommendations(
+            code
+        )
+        suggestions = [rec.title for rec in recommendations]
+        high_count = sum(1 for rec in recommendations if rec.priority == "high")
+        if high_count >= 2 or len(recommendations) >= 5:
+            potential = "high"
+        elif recommendations:
+            potential = "medium"
+        else:
+            potential = "low"
+        _ = optimization_level  # retained for callers; recommendations are unranked by level
         return {
             "status": "success",
-            "optimized_code": result.get("optimized_code", code),
-            "suggestions": result.get("suggestions", []),
-            "performance_impact": result.get("performance_impact", {}),
+            "optimized_code": code,
+            "suggestions": suggestions,
+            "performance_impact": {"potential": potential},
+            "recommendations": [
+                {
+                    "title": rec.title,
+                    "description": rec.description,
+                    "priority": rec.priority,
+                }
+                for rec in recommendations
+            ],
         }
     except Exception as e:
         return {
@@ -120,11 +139,29 @@ def _review_pyspark_code_internal(
 ) -> Dict[str, Any]:
     """Internal review function without MCP decoration."""
     try:
-        result = reviewer.review(code, focus_areas or [])
+        issues, metrics = reviewer.review_code(code)
+        if focus_areas:
+            issues = [i for i in issues if i.category in focus_areas]
+            metrics = {
+                **metrics,
+                "total_issues": len(issues),
+            }
         return {
             "status": "success",
-            "issues": result.get("issues", []),
-            "summary": result.get("summary", {}),
+            "issues": [
+                {
+                    "severity": i.severity,
+                    "category": i.category,
+                    "message": i.message,
+                    "line_number": i.line_number,
+                    "suggestion": i.suggestion,
+                }
+                for i in issues
+            ],
+            "summary": {
+                **metrics,
+                "aws_glue_ready": metrics.get("aws_glue_issues", 0) == 0,
+            },
         }
     except Exception as e:
         return {
@@ -215,6 +252,8 @@ def complete_sql_conversion(
     optimization_level: str = "standard",
     include_glue_template: bool = False,
     client_context: Optional[Dict] = None,
+    dialect: Optional[str] = None,
+    table_info: Optional[Dict] = None,
 ) -> Dict[str, Any]:
     """
     One-stop tool for complete SQL to PySpark conversion with optimization.
@@ -231,6 +270,8 @@ def complete_sql_conversion(
         optimization_level: "basic", "standard", "aggressive"
         include_glue_template: Whether to generate Glue job template
         client_context: Optional context (schema, tables, etc.)
+        dialect: Optional source SQL dialect override
+        table_info: Optional table metadata (merged into client_context)
 
     Returns:
         Complete conversion package ready for use
@@ -251,22 +292,24 @@ def complete_sql_conversion(
         context = context_result
 
         # Build table info from context
-        table_info = {}
+        resolved_table_info: Dict[str, Any] = {}
         if client_context:
-            table_info.update(client_context)
+            resolved_table_info.update(client_context)
+        if table_info:
+            resolved_table_info.update(table_info)
 
         # Add detected schemas and tables
         for schema in context.get("schemas", []):
             for table in context.get("tables", []):
                 full_table_name = f"{schema}.{table}" if schema else table
-                if full_table_name not in table_info:
-                    table_info[full_table_name] = {"size_gb": 1.0}  # Default estimate
+                if full_table_name not in resolved_table_info:
+                    resolved_table_info[full_table_name] = {"size_gb": 1.0}
 
         # 2. Convert with intelligent settings
         conversion_result = _convert_sql_to_pyspark_internal(
             sql_query=sql_content,
-            table_info=table_info,
-            dialect=context.get("dialect", "postgres"),
+            table_info=resolved_table_info,
+            dialect=dialect or context.get("dialect", "postgres"),
             store_result=True,
         )
 
@@ -302,16 +345,20 @@ def complete_sql_conversion(
             )
             glue_template = glue_result.get("template")
 
-        # Calculate performance improvement estimate
         optimizations_count = len(optimization_result.get("suggestions", []))
-        performance_gain = f"{min(15 + optimizations_count * 5, 50)}-{min(25 + optimizations_count * 8, 70)}%"
+        if optimizations_count >= 5:
+            performance_potential = "high"
+        elif optimizations_count >= 2:
+            performance_potential = "medium"
+        else:
+            performance_potential = "low"
 
         return {
             "status": "success",
             "pyspark_code": optimization_result.get(
                 "optimized_code", conversion_result["pyspark_code"]
             ),
-            "performance_gain": performance_gain,
+            "performance_potential": performance_potential,
             "aws_glue_compatible": review_result.get("summary", {}).get(
                 "aws_glue_ready", True
             ),
@@ -323,12 +370,11 @@ def complete_sql_conversion(
             "glue_job_template": glue_template,
             "optimizations_applied": optimization_result.get("suggestions", []),
             "context_detected": {
-                "dialect": context.get("dialect"),
+                "dialect": dialect or context.get("dialect"),
                 "multi_tenant": context.get("multi_tenant_pattern", False),
                 "complexity_score": context.get("complexity_score", 0),
                 "client_ids": context.get("client_ids", []),
             },
-            "deployment_ready": True,
         }
 
     except Exception as e:
@@ -472,7 +518,9 @@ def process_editor_selection(
 
 
 def realtime_sql_assistance(
-    current_sql: str, cursor_position: Optional[int] = None
+    current_sql: str,
+    cursor_position: Optional[int] = None,
+    sql_query: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Provide real-time assistance as developers type SQL.
@@ -481,10 +529,12 @@ def realtime_sql_assistance(
     Args:
         current_sql: Current SQL content being typed
         cursor_position: Current cursor position
+        sql_query: Router alias for current_sql
 
     Returns:
         Real-time suggestions, warnings, and completions
     """
+    current_sql = current_sql or sql_query or ""
     if not current_sql.strip():
         return {
             "status": "ready",
@@ -534,8 +584,13 @@ def realtime_sql_assistance(
 
 
 def workspace_analysis(
-    workspace_files: List[Dict[str, str]],  # [{"path": "...", "content": "..."}]
+    workspace_files: Optional[List[Dict[str, str]]] = None,
     analysis_scope: str = "sql_optimization",
+    sql_content: Optional[str] = None,
+    workspace_path: Optional[str] = None,
+    include_project_structure: bool = True,
+    workspace_name: Optional[str] = None,
+    output_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Analyze entire workspace for SQL optimization opportunities.
@@ -544,10 +599,26 @@ def workspace_analysis(
     Args:
         workspace_files: List of files with path and content
         analysis_scope: Scope of analysis ("sql_optimization", "performance", "multi_tenant")
+        sql_content: Optional raw SQL when workspace_files is not provided
+        workspace_path: Optional path label for sql_content
+        include_project_structure: Accepted for router compatibility
+        workspace_name: Optional workspace label
+        output_dir: Accepted for router compatibility
 
     Returns:
         Comprehensive workspace analysis with recommendations
     """
+    if not workspace_files:
+        workspace_files = []
+        if sql_content:
+            workspace_files.append(
+                {
+                    "path": workspace_path
+                    or f"{workspace_name or 'workspace'}.sql",
+                    "content": sql_content,
+                }
+            )
+    _ = include_project_structure, output_dir
     try:
         # Filter SQL files
         sql_files = []
@@ -859,10 +930,18 @@ def _generate_contextual_suggestions(sql_content: str) -> List[str]:
 
 
 def generate_project_structure(
-    project_name: str,
-    sql_contents: List[str],  # List of SQL content (not file paths!)
+    project_name: str = "pyspark-workspace",
+    sql_contents: Optional[List[str]] = None,
     target_platform: str = "aws_glue",
     include_tests: bool = True,
+    sql_content: Optional[str] = None,
+    workspace_name: Optional[str] = None,
+    workspace_path: Optional[str] = None,
+    output_dir: Optional[str] = None,
+    include_glue_template: bool = True,
+    dialect: Optional[str] = None,
+    include_batch_processing: bool = False,
+    include_visualization: bool = False,
 ) -> Dict[str, Any]:
     """
     Generate complete PySpark project structure from SQL content.
@@ -873,10 +952,25 @@ def generate_project_structure(
         sql_contents: List of SQL content strings
         target_platform: Target platform ("aws_glue", "databricks", "spark")
         include_tests: Whether to include test files
+        sql_content: Single SQL string (router alias for sql_contents)
+        workspace_name: Router alias for project_name
+        workspace_path: Accepted for router compatibility
+        output_dir: Accepted for router compatibility
+        include_glue_template: When False, target_platform becomes "spark"
+        dialect: Accepted for router compatibility
+        include_batch_processing: Accepted for router compatibility
+        include_visualization: Accepted for router compatibility
 
     Returns:
         Complete project structure with all files
     """
+    _ = workspace_path, output_dir, dialect, include_batch_processing, include_visualization
+    if workspace_name:
+        project_name = workspace_name
+    if sql_contents is None:
+        sql_contents = [sql_content] if sql_content else []
+    if not include_glue_template and target_platform == "aws_glue":
+        target_platform = "spark"
     try:
         if not sql_contents:
             return {
@@ -1054,7 +1148,6 @@ class {class_name}:
             "suggestions_count": {conversion.get("suggestions", 0)}
         }}
 
-from pyspark_tools import consolidated_tools  # noqa: F401
 if __name__ == "__main__":
     processor = {class_name}()
     result = processor.process()
@@ -1585,17 +1678,29 @@ def search_conversions(query: str, limit: int = 5) -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 
-def store_context(key: str, value: Any) -> Dict[str, str]:
+def store_context(
+    key: Optional[str] = None,
+    value: Any = None,
+    conversion_id: Optional[str] = None,
+    context_data: Any = None,
+) -> Dict[str, str]:
     """
     Store context information for future reference.
 
     Args:
         key: Context key
         value: Context value (can be any JSON-serializable type)
+        conversion_id: Router alias for key
+        context_data: Router alias for value
 
     Returns:
         Status message
     """
+    key = key or conversion_id
+    if value is None:
+        value = context_data
+    if not key:
+        return {"status": "error", "message": "key or conversion_id is required"}
     try:
         memory.store_context(key, value)
         return {"status": "success", "message": f"Context stored with key: {key}"}
@@ -1604,16 +1709,22 @@ def store_context(key: str, value: Any) -> Dict[str, str]:
         return {"status": "error", "message": str(e)}
 
 
-def get_context(key: str) -> Dict[str, Any]:
+def get_context(
+    key: Optional[str] = None, conversion_id: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Retrieve stored context information.
 
     Args:
         key: Context key to retrieve
+        conversion_id: Router alias for key
 
     Returns:
         Dictionary containing the context value
     """
+    key = key or conversion_id
+    if not key:
+        return {"status": "error", "message": "key or conversion_id is required"}
     try:
         value = memory.get_context(key)
 
@@ -1641,6 +1752,10 @@ def generate_aws_glue_job_template(
     target_database: Optional[str] = None,
     target_table: Optional[str] = None,
     transformation_sql: Optional[str] = None,
+    sql_query: Optional[str] = None,
+    output_dir: Optional[str] = None,
+    template_type: str = "standard",
+    script_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Generate an enhanced AWS Glue job template with DynamicFrame support.
@@ -1656,10 +1771,16 @@ def generate_aws_glue_job_template(
         target_database: Target database name for Data Catalog
         target_table: Target table name for Data Catalog
         transformation_sql: Optional SQL transformation logic
+        sql_query: Router alias for transformation_sql
+        output_dir: Accepted for router compatibility
+        template_type: Accepted for router compatibility
+        script_name: Accepted for router compatibility
 
     Returns:
         Dictionary containing the enhanced Glue job template
     """
+    _ = output_dir, template_type, script_name
+    transformation_sql = transformation_sql or sql_query
     try:
         # Create configuration
         config = GlueJobConfig(
@@ -1952,18 +2073,23 @@ def get_active_batch_jobs() -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 
-def get_recent_batch_jobs(limit: int = 10) -> Dict[str, Any]:
+def get_recent_batch_jobs(
+    limit: int = 10, status: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Get recent batch jobs from the database.
 
     Args:
         limit: Maximum number of jobs to return
+        status: Optional status filter (e.g. "completed", "failed")
 
     Returns:
         Dictionary containing recent batch jobs
     """
     try:
         recent_jobs = memory.get_recent_batch_jobs(limit)
+        if status:
+            recent_jobs = [job for job in recent_jobs if job.status == status]
 
         return {
             "status": "success",
@@ -2042,7 +2168,9 @@ def analyze_code_patterns(
 
 
 def generate_utility_functions(
-    code_samples: List[str], min_usage_count: int = 2
+    code_samples: List[str],
+    min_usage_count: int = 2,
+    patterns: Optional[List[Any]] = None,
 ) -> Dict[str, Any]:
     """
     Generate utility functions from detected code patterns.
@@ -2050,10 +2178,12 @@ def generate_utility_functions(
     Args:
         code_samples: List of PySpark code samples to analyze
         min_usage_count: Minimum usage count for pattern to generate utility function
+        patterns: Optional pre-detected patterns (router compatibility; unused)
 
     Returns:
         Dictionary containing generated utility functions
     """
+    _ = patterns
     try:
         # Analyze patterns first
         analysis = duplicate_detector.analyze_patterns(code_samples)

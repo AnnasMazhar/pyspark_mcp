@@ -10,14 +10,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-# Import resource management for connection tracking
-try:
-    from .resource_manager import get_resource_manager
-
-    RESOURCE_MANAGEMENT_AVAILABLE = True
-except ImportError:
-    RESOURCE_MANAGEMENT_AVAILABLE = False
-
 
 @dataclass
 class BatchJob:
@@ -87,17 +79,6 @@ class MemoryManager:
     def _create_connection(self, description: str = "") -> sqlite3.Connection:
         """Create a database connection with resource tracking if available."""
         conn = sqlite3.connect(self.db_path)
-
-        # Register with resource manager if available
-        if RESOURCE_MANAGEMENT_AVAILABLE:
-            try:
-                resource_manager = get_resource_manager()
-                resource_manager.register_connection(
-                    conn, description or f"MemoryManager connection to {self.db_path}"
-                )
-            except Exception:
-                # If resource management fails, continue without it
-                pass
 
         return conn
 
@@ -991,13 +972,6 @@ class MemoryManager:
 
     def close(self):
         """Close any open database connections and cleanup resources."""
-        # If resource management is available, let it handle cleanup
-        if RESOURCE_MANAGEMENT_AVAILABLE:
-            try:
-                resource_manager = get_resource_manager()
-                resource_manager.cleanup_all()
-            except Exception:
-                pass
-
-        # Note: Individual connections are closed in their respective methods
+        # Individual connections are closed in their respective methods
         # using 'with' statements or explicit close() calls
+        return
