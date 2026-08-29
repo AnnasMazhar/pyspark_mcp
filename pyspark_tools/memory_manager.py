@@ -359,9 +359,19 @@ class MemoryManager:
             print(f"Database migration failed: {e}")
             return False
 
-    def _hash_sql(self, sql: str) -> str:
-        """Generate a hash for SQL query for deduplication."""
-        return hashlib.md5(sql.strip().lower().encode()).hexdigest()
+    def _hash_sql(
+        self,
+        sql: str,
+        dialect: Optional[str] = None,
+        table_info: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Hash SQL together with dialect and table_info so caches never cross dialects."""
+        dialect_key = (dialect or "spark").strip().lower()
+        table_key = ""
+        if table_info:
+            table_key = json.dumps(table_info, sort_keys=True, default=str)
+        payload = f"{sql.strip().lower()}|{dialect_key}|{table_key}"
+        return hashlib.md5(payload.encode()).hexdigest()
 
     def store_conversion(
         self,
@@ -370,9 +380,10 @@ class MemoryManager:
         optimization_notes: str = "",
         review_notes: str = "",
         dialect: str = "spark",
+        table_info: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Store a SQL to PySpark conversion."""
-        sql_hash = self._hash_sql(sql_query)
+        sql_hash = self._hash_sql(sql_query, dialect=dialect, table_info=table_info)
 
         conn = self._create_connection("Store conversion")
         try:
@@ -397,9 +408,14 @@ class MemoryManager:
 
         return sql_hash
 
-    def get_conversion(self, sql_query: str) -> Optional[Dict[str, Any]]:
-        """Retrieve a stored conversion by SQL query."""
-        sql_hash = self._hash_sql(sql_query)
+    def get_conversion(
+        self,
+        sql_query: str,
+        dialect: Optional[str] = None,
+        table_info: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieve a stored conversion by SQL query, dialect, and table_info."""
+        sql_hash = self._hash_sql(sql_query, dialect=dialect, table_info=table_info)
 
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row

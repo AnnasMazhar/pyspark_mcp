@@ -279,8 +279,8 @@ open htmlcov/index.html
 ### 12. Getting Help
 
 - 📖 Read the [documentation](docs/)
-- 🐛 Report bugs via [GitHub Issues](https://github.com/your-org/pyspark_mcp/issues)
-- 💬 Ask questions in [Discussions](https://github.com/your-org/pyspark_mcp/discussions)
+- 🐛 Report bugs via [GitHub Issues](https://github.com/AnnasMazhar/pyspark_mcp/issues)
+- 💬 Ask questions in [Discussions](https://github.com/AnnasMazhar/pyspark_mcp/discussions)
 - 📧 Contact maintainers
 
 ## Code of Conduct

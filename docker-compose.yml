@@ -1,12 +1,12 @@
 version: '3.8'
 
 services:
-  # Main application service
+  # Stdio MCP process — no HTTP port. Compose is for tests, not a web app.
   pyspark-tools:
     build: .
     container_name: pyspark-tools-server
-    ports:
-      - "8000:8000"
+    stdin_open: true
+    tty: true
     volumes:
       - pyspark_data:/data
       - pyspark_output:/output

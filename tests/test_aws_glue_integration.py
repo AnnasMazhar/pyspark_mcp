@@ -36,7 +36,7 @@ class TestAWSGlueIntegration:
         assert config.target_format == DataFormat.PARQUET
         assert config.include_bookmarking is True
         assert config.use_dynamic_frame is True
-        assert config.glue_version == "4.0"
+        assert config.glue_version == "5.0"
 
     def test_data_catalog_table_creation(self):
         """Test DataCatalogTable creation."""
@@ -138,7 +138,8 @@ class TestAWSGlueIntegration:
         imports = self.glue_integration._generate_imports(config)
 
         assert "from awsglue.dynamicframe import DynamicFrame" in imports
-        assert "from awsglue import DynamicFrame" in imports
+        assert "from awsglue import DynamicFrame" not in imports
+        assert imports.count("DynamicFrame") == 1
 
     def test_generate_imports_with_logging(self):
         """Test import generation with continuous logging."""
@@ -281,8 +282,8 @@ class TestAWSGlueIntegration:
         assert "except Exception as e:" in error_code
         assert "Job failed with error" in error_code
         assert "raise e" in error_code
-        assert "finally:" in error_code
-        assert "Job bookmarking disabled" in error_code
+        assert "finally:" not in error_code
+        assert "job.commit()" not in error_code
 
     def test_generate_error_handling_with_bookmarking(self):
         """Test error handling with bookmarking enabled."""

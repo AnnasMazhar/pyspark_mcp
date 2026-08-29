@@ -106,7 +106,17 @@ class SQLToPySparkConverter:
 
         self.logger = logging.getLogger(__name__)
 
-    _TEMPLATE_PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+    _TEMPLATE_PLACEHOLDER_RE = re.compile(
+        r"\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\}"
+    )
+    _LEFTOVER_BRACES_RE = re.compile(r"\{[^{}]+\}")
+    _PRODUCTION_FUNCTION_IMPORTS = (
+        "from pyspark.sql.functions import (\n"
+        "    col, lit, when, count, sum, avg, min, max, countDistinct,\n"
+        "    coalesce, concat, datediff, date_add, to_date,\n"
+        "    row_number, rank, lag, lead,\n"
+        ")"
+    )
 
     def _substitute_template_placeholders(self, sql: str) -> Tuple[str, List[str]]:
         """Replace `{schema}` / `{table_name}` style placeholders with identifiers.
@@ -131,7 +141,11 @@ class SQLToPySparkConverter:
         return self._TEMPLATE_PLACEHOLDER_RE.sub(_repl, sql), warnings
 
     def convert_sql_to_pyspark(
-        self, sql: str, table_info: Optional[Dict] = None, dialect: Optional[str] = None
+        self,
+        sql: str,
+        table_info: Optional[Dict] = None,
+        dialect: Optional[str] = None,
+        style: str = "production",
     ) -> ConversionResult:
         """
         Convert SQL to PySpark code with enhanced dialect support.
@@ -150,6 +164,20 @@ class SQLToPySparkConverter:
 
         sql, placeholder_warnings = self._substitute_template_placeholders(sql)
         warnings.extend(placeholder_warnings)
+
+        leftovers = self._LEFTOVER_BRACES_RE.findall(sql)
+        if leftovers:
+            named = ", ".join(leftovers)
+            return ConversionResult(
+                pyspark_code="",
+                optimizations=[],
+                warnings=warnings
+                + [f"Unresolved template placeholder(s): {named}"],
+                dialect_used=(dialect or "unknown"),
+                complex_constructs=[],
+                fallback_used=False,
+                success=False,
+            )
 
         # Auto-detect dialect if not provided
         if not dialect:
@@ -171,7 +199,7 @@ class SQLToPySparkConverter:
             # Check if fallback is required for unsupported features
             if self._requires_fallback(sql, parsed):
                 fallback_code, fallback_guidance = self._enhanced_fallback_conversion(
-                    sql, dialect
+                    sql, dialect, style=style
                 )
                 warnings.extend(fallback_guidance)
 
@@ -189,7 +217,7 @@ class SQLToPySparkConverter:
 
             # Generate enhanced PySpark code
             pyspark_code = self._generate_enhanced_pyspark_code(
-                parsed, table_info, dialect
+                parsed, table_info, dialect, style=style
             )
 
             # Generate dialect-specific optimizations
@@ -220,7 +248,7 @@ class SQLToPySparkConverter:
 
                         complex_constructs = self._analyze_complex_constructs(parsed)
                         pyspark_code = self._generate_enhanced_pyspark_code(
-                            parsed, table_info, fallback_dialect
+                            parsed, table_info, fallback_dialect, style=style
                         )
                         optimizations = self._generate_dialect_optimizations(
                             parsed, table_info, fallback_dialect
@@ -239,7 +267,7 @@ class SQLToPySparkConverter:
 
             # Final fallback to pattern-based conversion
             fallback_code, fallback_guidance = self._enhanced_fallback_conversion(
-                sql, dialect
+                sql, dialect, style=style
             )
             warnings.extend(fallback_guidance)
 
@@ -342,20 +370,33 @@ class SQLToPySparkConverter:
 
         return any(pattern in sql_lower for pattern in unsupported_patterns)
 
-    def _generate_enhanced_pyspark_code(
-        self, parsed_sql, table_info: Optional[Dict] = None, dialect: str = "spark"
-    ) -> str:
-        """Generate enhanced PySpark code from parsed SQL with dialect support."""
-
-        code_lines = [
+    def _code_preamble(self, dialect: str, style: str = "production") -> List[str]:
+        """Import / SparkSession header. Default is production-shaped (no import *)."""
+        functions_import = (
+            "from pyspark.sql.functions import *"
+            if style == "notebook"
+            else self._PRODUCTION_FUNCTION_IMPORTS
+        )
+        return [
             "from pyspark.sql import SparkSession",
-            "from pyspark.sql.functions import *",
+            functions_import,
             "from pyspark.sql.window import Window",
             "",
             f"# Generated from {dialect.upper()} SQL",
             "spark = SparkSession.builder.appName('SQLToPySpark').getOrCreate()",
             "",
         ]
+
+    def _generate_enhanced_pyspark_code(
+        self,
+        parsed_sql,
+        table_info: Optional[Dict] = None,
+        dialect: str = "spark",
+        style: str = "production",
+    ) -> str:
+        """Generate enhanced PySpark code from parsed SQL with dialect support."""
+
+        code_lines = self._code_preamble(dialect, style=style)
 
         # Handle CTEs first
         cte_code = self._handle_ctes(parsed_sql, dialect)
@@ -400,9 +441,10 @@ class SQLToPySparkConverter:
         main_query_code = self._build_main_query(parsed_sql, dialect)
         code_lines.extend(main_query_code)
 
-        code_lines.append("")
-        code_lines.append("# Show results")
-        code_lines.append("result_df.show()")
+        if style == "notebook":
+            code_lines.append("")
+            code_lines.append("# Show results")
+            code_lines.append("result_df.show()")
 
         # Sanitize generated code for Python validity
         code = "\n".join(code_lines)
@@ -648,6 +690,14 @@ class SQLToPySparkConverter:
 
             # Build query chain
             query_parts = []
+
+            if not from_clause:
+                try:
+                    spark_sql = sqlglot.transpile(str(parsed_sql), write="spark")[0]
+                except Exception:
+                    spark_sql = str(parsed_sql)
+                code_lines.append(f"result_df = spark.sql({spark_sql!r})")
+                return code_lines
 
             if from_clause:
                 main_table_name, main_table_alias = from_clause[0]
@@ -1976,7 +2026,7 @@ class SQLToPySparkConverter:
         return optimizations
 
     def _enhanced_fallback_conversion(
-        self, sql: str, dialect: str
+        self, sql: str, dialect: str, style: str = "production"
     ) -> Tuple[str, List[str]]:
         """Enhanced fallback conversion with detailed guidance."""
 
@@ -2029,18 +2079,18 @@ class SQLToPySparkConverter:
                 guidance.append("Redshift date functions - use PySpark date functions")
 
         # Generate fallback code with better structure
-        code_lines = [
-            "from pyspark.sql import SparkSession",
-            "from pyspark.sql.functions import *",
-            "from pyspark.sql.window import Window",
-            "",
-            f"# FALLBACK CONVERSION - {dialect.upper()} SQL",
-            "# This conversion uses direct SQL execution",
-            "# Consider converting to DataFrame operations for better optimization",
-            "",
-            "spark = SparkSession.builder.appName('SQLToPySpark').getOrCreate()",
-            "",
-        ]
+        code_lines = self._code_preamble(dialect, style=style)
+        for i, line in enumerate(code_lines):
+            if line.startswith("# Generated from"):
+                code_lines[i] = f"# FALLBACK CONVERSION - {dialect.upper()} SQL"
+                code_lines.insert(
+                    i + 1, "# This conversion uses direct SQL execution"
+                )
+                code_lines.insert(
+                    i + 2,
+                    "# Consider converting to DataFrame operations for better optimization",
+                )
+                break
 
         # Add guidance as comments
         if guidance:
@@ -2063,9 +2113,9 @@ class SQLToPySparkConverter:
                 "# table_df = spark.table('your_table')",
                 "# Step 2: Apply transformations",
                 "# result_df = table_df.filter(...).select(...).groupBy(...)",
-                "",
-                "result_df.show()",
             ]
         )
+        if style == "notebook":
+            code_lines.extend(["", "result_df.show()"])
 
         return "\n".join(code_lines), guidance

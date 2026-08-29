@@ -45,7 +45,9 @@ def _convert_sql_to_pyspark_internal(
 ) -> Dict[str, Any]:
     """Internal conversion function without MCP decoration."""
     try:
-        cached = memory.get_conversion(sql_query)
+        cached = memory.get_conversion(
+            sql_query, dialect=dialect, table_info=table_info
+        )
         if cached:
             return {
                 "status": "success",
@@ -83,6 +85,7 @@ def _convert_sql_to_pyspark_internal(
                 pyspark_code=result.pyspark_code,
                 optimization_notes="\n".join(result.optimizations),
                 dialect=result.dialect_used,
+                table_info=table_info,
             )
 
         return {
@@ -125,7 +128,7 @@ def _optimize_pyspark_code_internal(
         _ = optimization_level  # retained for callers; recommendations are unranked by level
         return {
             "status": "success",
-            "optimized_code": code,
+            "original_code": code,
             "suggestions": suggestions,
             "performance_impact": {"potential": potential},
             "recommendations": [
@@ -141,7 +144,7 @@ def _optimize_pyspark_code_internal(
         return {
             "status": "error",
             "message": str(e),
-            "optimized_code": code,
+            "original_code": code,
             "suggestions": [],
         }
 
@@ -1429,7 +1432,7 @@ variable "script_bucket" {{
 resource "aws_glue_job" "query_{conv["index"] + 1}_job" {{
   name         = "query_{conv["index"] + 1}_processor"
   role_arn     = var.glue_role_arn
-  glue_version = "4.0"
+  glue_version = "5.0"
   
   command {{
     name            = "glueetl"
@@ -1589,11 +1592,11 @@ def optimize_pyspark_code(
     Provide optimization suggestions for PySpark code.
 
     Args:
-        code: The PySpark code to optimize
+        code: The PySpark code to review
         optimization_level: Level of optimization ("basic", "standard", "aggressive")
 
     Returns:
-        Dictionary containing optimization suggestions and improved code
+        Dictionary with ``original_code`` and ``suggestions``. Does not rewrite.
     """
     return _optimize_pyspark_code_internal(code, optimization_level)
 
@@ -3258,7 +3261,7 @@ def generate_glue_job_properties(
     number_of_workers: int = 2,
     max_retries: int = 0,
     timeout: int = 2880,
-    glue_version: str = "4.0",
+    glue_version: str = "5.0",
     enable_continuous_logging: bool = True,
     enable_metrics: bool = True,
     enable_spark_ui: bool = True,

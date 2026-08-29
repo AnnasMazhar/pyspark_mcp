@@ -25,7 +25,8 @@ Modes: `sql_context`, `data_flow`, `codebase`, `workspace`.
 
 ## `optimize`
 
-Optimize PySpark source, join strategy, partitioning, comprehensive notes.
+Pattern-based suggestions for PySpark source, join strategy, partitioning.
+`optimize(mode="code")` does **not** rewrite the input.
 
 ```python
 optimize(mode="code", code="df.join(other, 'id')", optimization_level="standard")
@@ -70,7 +71,7 @@ Modes: `detect`, `evolve`, `catalog`.
 
 ## `glue_s3`
 
-S3 layout analysis and small-file consolidation *templates*.
+Path-heuristic S3 layout suggestions. **No AWS API call**; figures are not measured.
 
 ```python
 glue_s3(mode="analyze", s3_location="s3://bucket/path", database_name="raw", table_name="orders")
