@@ -158,6 +158,8 @@ def analyze(
     workspace_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
+    **Deprecated.** Prefer ``convert`` / ``glue_job`` / ``review``. Still registered this minor version.
+
     Analyze SQL or PySpark code for context, data flow, or optimization opportunities.
 
     **Modes:**
@@ -254,6 +256,8 @@ def optimize(
     optimization_level: str = "standard",
 ) -> Dict[str, Any]:
     """
+    **Deprecated.** Prefer ``review``. Still registered this minor version.
+
     Optimize PySpark code and recommend performance improvements.
 
     **Modes:**
@@ -528,6 +532,8 @@ def glue_schema(
     enable_schema_evolution: bool = True,
 ) -> Dict[str, Any]:
     """
+    **Deprecated.** Prefer ``glue_job``. Still registered this minor version.
+
     Manage Glue Data Catalog schemas — detect, evolve, and define.
 
     **Modes:**
@@ -618,6 +624,8 @@ def glue_s3(
     consolidation_strategy: str = "coalesce",
 ) -> Dict[str, Any]:
     """
+    **Deprecated.** Prefer ``glue_job``. Still registered this minor version.
+
     Analyze S3 data layouts using **path heuristics** (no AWS API call).
 
     **Modes:**
@@ -714,6 +722,8 @@ def glue_data(
     transformation_context_keys: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
+    **Deprecated.** Prefer ``glue_job``. Still registered this minor version.
+
     Generate AWS Glue data processing jobs — incremental, CDC, bookmarks.
 
     **Modes:**
@@ -809,6 +819,8 @@ def refactor(
     include_visualization: bool = False,
 ) -> Dict[str, Any]:
     """
+    **Deprecated.** Prefer ``review``. Still registered this minor version.
+
     Refactor PySpark code and generate pipeline structures.
 
     **Modes:**
@@ -895,6 +907,8 @@ def search(
     key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
+    **Deprecated.** Prefer ``convert``. Still registered this minor version.
+
     Search stored conversions, code patterns, and context data.
 
     **Modes:**
@@ -954,6 +968,8 @@ def context(
     selected_text: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
+    **Deprecated.** Prefer ``convert``. Still registered this minor version.
+
     Store, retrieve, and work with SQL/PySpark conversion context.
 
     **Modes:**
@@ -1011,6 +1027,8 @@ def batch_status(
     status: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
+    **Deprecated.** Prefer ``convert(mode="batch_dir")``. Still registered this minor version.
+
     Monitor and manage batch processing jobs.
 
     **Modes:**
@@ -1070,6 +1088,8 @@ def s3_source(
     analyze_history: bool = False,
 ) -> Dict[str, Any]:
     """
+    **Deprecated.** Prefer ``glue_job``. Still registered this minor version.
+
     Analyze S3 data sources and Delta tables.
 
     **Modes:**
@@ -1119,6 +1139,8 @@ def analytics(
     limit: int = 50,
 ) -> Dict[str, Any]:
     """
+    **Deprecated.** Prefer ``review``. Still registered this minor version.
+
     Analytics on optimization effectiveness and usage patterns.
 
     **Modes:**

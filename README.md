@@ -136,22 +136,18 @@ docker compose --profile test run --rm pyspark-tools-test
 
 ## Tools
 
-Fourteen routers. Each takes `mode=` plus a small set of fields. Old 51-tool names are **not** registered MCP tools (they remain as Python helpers in `server.py`).
+Three primary tools. The other eleven routers stay registered this minor
+version but are **deprecated** — prefer `convert`, `glue_job`, and `review`.
 
-### `convert` — SQL → PySpark, batch files, PDF
+### `convert` — SQL → PySpark (including `mode=batch_dir`)
 ```python
 convert(mode="sql", sql_query="SELECT id FROM users", dialect="postgres")
-convert(mode="batch_files", file_paths=["etl/job.sql"], output_dir="out")
+convert(mode="batch_dir", directory_path="etl/", output_dir="out")
 ```
 
-### `analyze` — context, data flow, codebase, workspace
+### `glue_job` — Glue 5.0 job *template* strings
 ```python
-analyze(mode="sql_context", sql_content="SELECT * FROM orders o JOIN items i ON o.id = i.order_id")
-```
-
-### `optimize` — suggestions only (does not rewrite)
-```python
-optimize(mode="code", code="df.join(other, 'id').select('*')", optimization_level="standard")
+glue_job(mode="template", job_name="orders_etl", sql_query="SELECT * FROM orders")
 ```
 
 ### `review` — code review, patterns, duplicates
@@ -159,55 +155,9 @@ optimize(mode="code", code="df.join(other, 'id').select('*')", optimization_leve
 review(mode="code", code="df = spark.table('t')\ndf.collect()")
 ```
 
-### `glue_job` — template, DynamicFrame, properties, SQL conversion
-```python
-glue_job(mode="template", job_name="orders_etl", sql_query="SELECT * FROM orders")
-```
-
-### `glue_schema` — detect, evolve, catalog
-```python
-glue_schema(mode="detect", sample_data=[{"id": 1}], table_name="orders")
-```
-
-### `glue_s3` — path-heuristic layout advice (no AWS call)
-```python
-glue_s3(mode="analyze", s3_location="s3://bucket/path", database_name="raw", table_name="orders")
-```
-
-### `glue_data` — incremental, CDC, bookmarks
-```python
-glue_data(mode="bookmarks", job_name="orders_etl")
-```
-
-### `refactor` — patterns, utilities, pipeline
-```python
-refactor(mode="utilities", code_samples=["df.filter(col('a')==1)", "df.filter(col('b')==2)"])
-```
-
-### `search` — conversions, patterns, context
-```python
-search(mode="conversions", query="orders", limit=10)
-```
-
-### `context` — store, get, assist
-```python
-context(mode="store", conversion_id="job-1", context_data={"dialect": "postgres"})
-```
-
-### `batch_status` — status, cancel, active, recent
-```python
-batch_status(mode="recent", limit=10)
-```
-
-### `s3_source` — analyze S3 / Delta (uses host AWS credentials if boto3 is installed)
-```python
-s3_source(mode="analyze", s3_path="s3://bucket/prefix")
-```
-
-### `analytics` — optimization / usage stats
-```python
-analytics(mode="usage", limit=20)
-```
+**Legacy / deprecated:** `analyze`, `optimize`, `glue_schema`, `glue_s3`,
+`glue_data`, `refactor`, `search`, `context`, `batch_status`, `s3_source`,
+`analytics`. Still callable; do not advertise to new agents.
 
 ## Security
 

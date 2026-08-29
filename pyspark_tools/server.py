@@ -1926,7 +1926,8 @@ def batch_process_directory(
             recursive=recursive,
         )
 
-        return {
+        report = batch_processor.build_conversion_report(result)
+        payload = {
             "status": "success",
             "job_id": result.job_id,
             "job_name": result.job_name,
@@ -1944,6 +1945,8 @@ def batch_process_directory(
             "optimization_summary": result.optimization_summary,
             "error_count": len(result.error_summary) if result.error_summary else 0,
         }
+        payload.update(report)
+        return payload
 
     except Exception as e:
         return {"status": "error", "message": str(e)}
