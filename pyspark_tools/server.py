@@ -42,11 +42,17 @@ def _convert_sql_to_pyspark_internal(
     table_info: Optional[Dict] = None,
     dialect: Optional[str] = None,
     store_result: bool = True,
+    style: str = "production",
+    target: str = "spark",
 ) -> Dict[str, Any]:
     """Internal conversion function without MCP decoration."""
     try:
         cached = memory.get_conversion(
-            sql_query, dialect=dialect, table_info=table_info
+            sql_query,
+            dialect=dialect,
+            table_info=table_info,
+            style=style,
+            target=target,
         )
         if cached:
             return {
@@ -65,7 +71,9 @@ def _convert_sql_to_pyspark_internal(
                 "fallback_used": False,
             }
 
-        result = converter.convert_sql_to_pyspark(sql_query, table_info, dialect)
+        result = converter.convert_sql_to_pyspark(
+            sql_query, table_info, dialect, style=style, target=target
+        )
 
         if not result.success:
             return {
@@ -86,6 +94,8 @@ def _convert_sql_to_pyspark_internal(
                 optimization_notes="\n".join(result.optimizations),
                 dialect=result.dialect_used,
                 table_info=table_info,
+                style=style,
+                target=target,
             )
 
         return {
@@ -244,6 +254,8 @@ def convert_sql_to_pyspark(
     table_info: Optional[Dict] = None,
     dialect: Optional[str] = None,
     store_result: bool = True,
+    style: str = "production",
+    target: str = "spark",
 ) -> Dict[str, Any]:
     """
     Convert SQL query to PySpark code with enhanced dialect support.
@@ -253,12 +265,19 @@ def convert_sql_to_pyspark(
         table_info: Optional table metadata for better optimization
         dialect: Source SQL dialect (postgres, oracle, redshift, etc.)
         store_result: Whether to store the result in memory
+        style: ``production`` (default) or ``notebook``
+        target: ``spark`` (default) or ``glue``
 
     Returns:
         Dictionary containing PySpark code, optimizations, and conversion metadata
     """
     return _convert_sql_to_pyspark_internal(
-        sql_query, table_info, dialect, store_result
+        sql_query,
+        table_info,
+        dialect,
+        store_result,
+        style=style,
+        target=target,
     )
 
 

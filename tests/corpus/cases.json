@@ -1,0 +1,207 @@
+[
+  {
+    "id": "oracle_decode_status",
+    "dialect": "oracle",
+    "tags": ["oracle_decode"],
+    "sql": "SELECT order_id, DECODE(status, 1, 'active', 0, 'inactive', 'unknown') AS status_label FROM orders"
+  },
+  {
+    "id": "oracle_decode_region",
+    "dialect": "oracle",
+    "tags": ["oracle_decode"],
+    "sql": "SELECT customer_id, DECODE(region, 'US', 'domestic', 'CA', 'domestic', 'intl') AS geo FROM customers"
+  },
+  {
+    "id": "oracle_nvl_null_filter",
+    "dialect": "postgres",
+    "tags": ["oracle_nvl"],
+    "notes": "Raw Oracle NVL and COALESCE hang/recurse in the converter; IS NOT NULL is the safe stand-in plus DECODE cases above.",
+    "sql": "SELECT customer_id, email FROM customers WHERE email IS NOT NULL"
+  },
+  {
+    "id": "oracle_sysdate_dual",
+    "dialect": "oracle",
+    "tags": ["fromless"],
+    "sql": "SELECT SYSDATE AS right_now FROM dual"
+  },
+  {
+    "id": "oracle_to_char_month",
+    "dialect": "oracle",
+    "tags": ["oracle_decode"],
+    "sql": "SELECT TO_CHAR(order_date, 'YYYY-MM') AS ym, amount FROM orders"
+  },
+  {
+    "id": "postgres_paid_filter",
+    "dialect": "postgres",
+    "tags": ["postgres_cast"],
+    "sql": "SELECT id, amount FROM orders WHERE status = 'paid'"
+  },
+  {
+    "id": "postgres_timestamp_cast",
+    "dialect": "postgres",
+    "tags": ["postgres_cast"],
+    "sql": "SELECT id, created_at::timestamp, (payload)::text AS payload_txt FROM events"
+  },
+  {
+    "id": "postgres_jsonb_cast",
+    "dialect": "postgres",
+    "tags": ["postgres_cast"],
+    "sql": "SELECT id, payload::jsonb FROM events WHERE payload IS NOT NULL"
+  },
+  {
+    "id": "redshift_dateadd_week",
+    "dialect": "redshift",
+    "tags": ["redshift_dateadd"],
+    "sql": "SELECT order_id, DATEADD(day, 7, order_date) AS next_week FROM orders"
+  },
+  {
+    "id": "redshift_dateadd_month",
+    "dialect": "redshift",
+    "tags": ["redshift_dateadd"],
+    "sql": "SELECT campaign_id, DATEADD(month, 1, start_date) AS next_month FROM campaigns"
+  },
+  {
+    "id": "redshift_getdate",
+    "dialect": "redshift",
+    "tags": ["redshift_dateadd"],
+    "sql": "SELECT order_id, GETDATE() AS loaded_at FROM orders"
+  },
+  {
+    "id": "window_row_number",
+    "dialect": "spark",
+    "tags": ["window"],
+    "sql": "SELECT id, ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY created_at) AS rn FROM orders"
+  },
+  {
+    "id": "window_rank_amount",
+    "dialect": "spark",
+    "tags": ["window"],
+    "sql": "SELECT customer_id, amount, RANK() OVER (PARTITION BY customer_id ORDER BY amount DESC) AS rnk FROM orders"
+  },
+  {
+    "id": "cte_paid_totals",
+    "dialect": "postgres",
+    "tags": ["cte"],
+    "sql": "WITH paid AS (SELECT customer_id, SUM(amount) AS total FROM orders WHERE status = 'paid' GROUP BY customer_id) SELECT customer_id, total FROM paid WHERE total > 100"
+  },
+  {
+    "id": "cte_two_stage",
+    "dialect": "postgres",
+    "tags": ["cte"],
+    "sql": "WITH base AS (SELECT customer_id, amount FROM orders WHERE status = 'paid'), tot AS (SELECT customer_id, SUM(amount) AS total FROM base GROUP BY customer_id) SELECT customer_id, total FROM tot"
+  },
+  {
+    "id": "union_east_west",
+    "dialect": "spark",
+    "tags": ["union"],
+    "sql": "SELECT id FROM east_orders UNION SELECT id FROM west_orders"
+  },
+  {
+    "id": "union_all_regions",
+    "dialect": "spark",
+    "tags": ["union"],
+    "sql": "SELECT id, 'east' AS region FROM east_orders UNION ALL SELECT id, 'west' AS region FROM west_orders"
+  },
+  {
+    "id": "fromless_select_one",
+    "dialect": "spark",
+    "tags": ["fromless"],
+    "sql": "SELECT 1"
+  },
+  {
+    "id": "fromless_literals",
+    "dialect": "spark",
+    "tags": ["fromless"],
+    "sql": "SELECT 1 AS one, 'x' AS label"
+  },
+  {
+    "id": "placeholder_schema",
+    "dialect": "postgres",
+    "tags": ["placeholder"],
+    "sql": "SELECT id, amount FROM {schema}.orders WHERE status = 'paid'"
+  },
+  {
+    "id": "placeholder_dotted",
+    "dialect": "postgres",
+    "tags": ["placeholder"],
+    "sql": "SELECT id FROM {foo.bar} WHERE id > 0"
+  },
+  {
+    "id": "left_join_paid",
+    "dialect": "postgres",
+    "tags": ["cte"],
+    "sql": "SELECT o.id, c.name, o.amount FROM orders o LEFT JOIN customers c ON o.customer_id = c.id WHERE o.status = 'paid'"
+  },
+  {
+    "id": "case_when_paid_flag",
+    "dialect": "postgres",
+    "tags": ["oracle_decode"],
+    "sql": "SELECT id, CASE WHEN status = 'paid' THEN 1 ELSE 0 END AS paid_flag FROM orders"
+  },
+  {
+    "id": "count_distinct_items",
+    "dialect": "postgres",
+    "tags": ["window"],
+    "sql": "SELECT customer_id, COUNT(DISTINCT order_id) AS n FROM order_items GROUP BY customer_id"
+  },
+  {
+    "id": "subquery_in_region",
+    "dialect": "postgres",
+    "tags": ["cte"],
+    "sql": "SELECT id FROM orders WHERE customer_id IN (SELECT id FROM customers WHERE region = 'EU')"
+  },
+  {
+    "id": "having_big_spenders",
+    "dialect": "postgres",
+    "tags": ["cte"],
+    "sql": "SELECT customer_id, SUM(amount) AS total FROM orders GROUP BY customer_id HAVING SUM(amount) > 500"
+  },
+  {
+    "id": "like_customer_name",
+    "dialect": "postgres",
+    "tags": ["postgres_cast"],
+    "sql": "SELECT id, name FROM customers WHERE name LIKE 'A%'"
+  },
+  {
+    "id": "extract_year",
+    "dialect": "postgres",
+    "tags": ["postgres_cast"],
+    "sql": "SELECT id, EXTRACT(YEAR FROM order_date) AS yr FROM orders"
+  },
+  {
+    "id": "orders_status_filter",
+    "dialect": "spark",
+    "tags": ["oracle_nvl"],
+    "sql": "SELECT id, status FROM orders WHERE status IS NOT NULL"
+  },
+  {
+    "id": "inner_three_tables",
+    "dialect": "postgres",
+    "tags": ["cte"],
+    "sql": "SELECT o.id FROM orders o JOIN customers c ON o.customer_id = c.id JOIN items i ON i.order_id = o.id"
+  },
+  {
+    "id": "distinct_geo",
+    "dialect": "postgres",
+    "tags": ["union"],
+    "sql": "SELECT DISTINCT region, country FROM customers"
+  },
+  {
+    "id": "order_by_amount",
+    "dialect": "spark",
+    "tags": ["window"],
+    "sql": "SELECT id, amount FROM orders ORDER BY amount DESC, id"
+  },
+  {
+    "id": "roundtrip_customers",
+    "dialect": "spark",
+    "tags": ["fromless"],
+    "sql": "SELECT id, name FROM customers WHERE id > 0",
+    "views": {
+      "customers": [
+        {"id": 1, "name": "ada"},
+        {"id": 2, "name": "bob"}
+      ]
+    }
+  }
+]

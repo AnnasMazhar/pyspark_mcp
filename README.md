@@ -45,6 +45,15 @@ pyspark-tools
 
 Zero-clone alternative: `uvx pyspark-tools`. `run_server.py` is a development convenience that inserts `sys.path` and prints startup banners. Prefer `pyspark-tools` in configs and production.
 
+## Try it
+
+```bash
+pip install pyspark-tools
+python -c "from pathlib import Path; from pyspark_tools.sql_converter import SQLToPySparkConverter as C; from pyspark_tools.consolidated_tools import glue_job; c,s,o=C(),Path('examples'),Path('examples/out'); [(o/f'{n}.py').write_text(c.convert_sql_to_pyspark((s/f'{n}.sql').read_text(), dialect=d).pyspark_code) for n,d in [('postgres_orders','postgres'),('oracle_decode','oracle')]]; (o/'orders_etl_glue.py').write_text(glue_job(mode='template', job_name='orders_etl', sql_query=(s/'postgres_orders.sql').read_text())['template'])"
+```
+
+Writes the same files as `examples/out/`. MCP stdio CLI: `pyspark-tools`.
+
 ## Example: SQL → PySpark
 
 ```sql
@@ -60,7 +69,7 @@ Call `convert` with `mode=sql`. Captured converter output (`dialect=spark`):
 ```python
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
-    col, lit, when, count, sum, avg, min, max, countDistinct,
+    col, lit, when, count, sum as spark_sum, avg, min, max, countDistinct,
     coalesce, concat, datediff, date_add, to_date,
     row_number, rank, lag, lead,
 )
@@ -79,7 +88,7 @@ result_df = (orders_df.alias('o')
     .join(customers_df.alias('c'), (col('o.customer_id') == col('c.id')), 'inner')
     .filter((col('o.status') == lit('paid')))
     .groupBy(col('o.customer_id'), col('c.name'))
-    .select(col('o.customer_id'), col('c.name'), (sum(col('o.amount'))).alias('total')))
+    .select(col('o.customer_id'), col('c.name'), (spark_sum(col('o.amount'))).alias('total')))
 ```
 
 Exact output depends on dialect detection and fallbacks; conversion tests in `tests/test_sql_conversion_fixes.py` pin the important constructs. Notebook-style `import *` / `show()` is opt-in via `style="notebook"` on the converter.
