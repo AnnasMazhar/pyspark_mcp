@@ -106,6 +106,30 @@ class SQLToPySparkConverter:
 
         self.logger = logging.getLogger(__name__)
 
+    _TEMPLATE_PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+    def _substitute_template_placeholders(self, sql: str) -> Tuple[str, List[str]]:
+        """Replace `{schema}` / `{table_name}` style placeholders with identifiers.
+
+        Glue/README templates ship SQL with brace placeholders that are not
+        valid in any SQL dialect. Parsing them as-is falls back to spark and
+        emits un-runnable code (`col(':schema.id')`). Substitute first so the
+        requested dialect can parse; leftover braces are unresolvable.
+        """
+        warnings: List[str] = []
+
+        def _repl(match: re.Match) -> str:
+            name = match.group(1)
+            msg = (
+                f"Substituted template placeholder {{{name}}} "
+                f"with identifier '{name}'"
+            )
+            if msg not in warnings:
+                warnings.append(msg)
+            return name
+
+        return self._TEMPLATE_PLACEHOLDER_RE.sub(_repl, sql), warnings
+
     def convert_sql_to_pyspark(
         self, sql: str, table_info: Optional[Dict] = None, dialect: Optional[str] = None
     ) -> ConversionResult:
@@ -123,6 +147,9 @@ class SQLToPySparkConverter:
         warnings = []
         complex_constructs = []
         fallback_used = False
+
+        sql, placeholder_warnings = self._substitute_template_placeholders(sql)
+        warnings.extend(placeholder_warnings)
 
         # Auto-detect dialect if not provided
         if not dialect:
@@ -710,23 +737,35 @@ class SQLToPySparkConverter:
         resolved_expr = self._resolve_alias_references(expr, alias_map)
         return self._convert_expression_to_pyspark(resolved_expr, dialect)
 
-    def _resolve_alias_references(self, expr, alias_map: dict):
+    def _resolve_alias_references(self, expr, alias_map: dict, _resolving=None):
         """Recursively resolve column references that point to aliases in the same SELECT."""
+        if _resolving is None:
+            _resolving = set()
         if isinstance(expr, sqlglot.expressions.Column):
             col_name = expr.name if hasattr(expr, "name") else str(expr)
-            # If this column name matches an alias, replace with the actual expression
-            if col_name in alias_map:
-                return alias_map[col_name]
+            table = expr.table if hasattr(expr, "table") and expr.table else None
+            # Qualified columns (schema.id) are real columns, not SELECT aliases.
+            # Replacing them with an alias named `id` infinite-loops on
+            # `SELECT schema.id ... AS id`.
+            if table:
+                return expr
+            if col_name in alias_map and col_name not in _resolving:
+                _resolving.add(col_name)
+                return self._resolve_alias_references(
+                    alias_map[col_name], alias_map, _resolving
+                )
 
         # Recursively resolve in child expressions
         if hasattr(expr, "args"):
             for key, value in expr.args.items():
                 if isinstance(value, sqlglot.expressions.Expression):
-                    expr.args[key] = self._resolve_alias_references(value, alias_map)
+                    expr.args[key] = self._resolve_alias_references(
+                        value, alias_map, _resolving
+                    )
                 elif isinstance(value, list):
                     expr.args[key] = [
                         (
-                            self._resolve_alias_references(v, alias_map)
+                            self._resolve_alias_references(v, alias_map, _resolving)
                             if isinstance(v, sqlglot.expressions.Expression)
                             else v
                         )
@@ -1076,12 +1115,22 @@ class SQLToPySparkConverter:
             if isinstance(expr, sqlglot.expressions.Cast):
                 arg = self._convert_expression_to_pyspark(expr.this, dialect)
                 to_type = str(expr.to).lower()
+                # PostgreSQL BIT/VARBIT has no Spark type. `::bit(n)::int` is a
+                # width-cast idiom — drop the BIT hop so the outer INT survives.
+                if to_type.startswith("bit"):
+                    return arg
                 # Map SQL types to PySpark types
                 if "decimal" in to_type or "numeric" in to_type:
                     return f"{arg}.cast('decimal(10,2)')"
                 elif "int" in to_type:
                     return f"{arg}.cast('int')"
-                elif "string" in to_type or "varchar" in to_type:
+                elif (
+                    "string" in to_type
+                    or "varchar" in to_type
+                    or to_type in {"text", "char", "nchar", "nvarchar", "bpchar"}
+                    or to_type.startswith("char")
+                    or to_type.startswith("varchar")
+                ):
                     return f"{arg}.cast('string')"
                 return f"{arg}.cast('{to_type}')"
 
@@ -1186,30 +1235,49 @@ class SQLToPySparkConverter:
                         df_var = table_name if table_name else table_alias
                         alias_name = table_alias if table_alias else table_name
 
-                        # Get join condition from args
-                        join_condition = "True"
-                        if hasattr(join, "args") and "on" in join.args:
+                        # Get join condition from args. Bare True is only valid
+                        # for CROSS JOIN / missing ON — never for a real predicate.
+                        if hasattr(join, "args") and join.args.get("on") is not None:
                             join_condition = self._convert_join_condition(
                                 join.args["on"]
                             )
+                        else:
+                            join_condition = "True"
 
                         join_lines.append(
                             f"    .join({df_var}_df.alias('{alias_name}'), {join_condition}, '{join_type}')"
                         )
 
+        except ValueError:
+            raise
         except Exception as e:
             self.logger.warning(f"Error extracting joins: {str(e)}")
 
         return join_lines
 
     def _convert_join_condition(self, condition_expr) -> str:
-        """Convert SQL join condition to PySpark expression."""
+        """Convert SQL join condition to PySpark expression.
+
+        Never returns a bare ``True`` for a real ON predicate — that silently
+        becomes a cartesian join. Unsupported constructs raise ValueError.
+        """
+        if condition_expr is None:
+            raise ValueError("JOIN ON predicate is missing")
         try:
+            if isinstance(condition_expr, sqlglot.expressions.Paren):
+                return self._convert_join_condition(condition_expr.this)
+
             # Handle AND conditions (multiple join keys)
             if isinstance(condition_expr, sqlglot.expressions.And):
                 left_cond = self._convert_join_condition(condition_expr.left)
                 right_cond = self._convert_join_condition(condition_expr.right)
                 return f"({left_cond}) & ({right_cond})"
+
+            # Handle OR conditions (e.g. ON a.id = b.id OR a.id2 = b.id2)
+            if isinstance(condition_expr, sqlglot.expressions.Or):
+                left_cond = self._convert_join_condition(condition_expr.left)
+                right_cond = self._convert_join_condition(condition_expr.right)
+                return f"({left_cond}) | ({right_cond})"
 
             # Handle EQ (equality) conditions
             if isinstance(condition_expr, sqlglot.expressions.EQ):
@@ -1217,11 +1285,32 @@ class SQLToPySparkConverter:
                 right = self._convert_column_ref(condition_expr.right)
                 return f"({left} == {right})"
 
-            # Fallback
-            return "True"
+            if isinstance(
+                condition_expr,
+                (
+                    sqlglot.expressions.NEQ,
+                    sqlglot.expressions.GT,
+                    sqlglot.expressions.GTE,
+                    sqlglot.expressions.LT,
+                    sqlglot.expressions.LTE,
+                    sqlglot.expressions.Like,
+                    sqlglot.expressions.In,
+                    sqlglot.expressions.Is,
+                    sqlglot.expressions.Not,
+                ),
+            ):
+                return self._convert_expression_to_filter(condition_expr)
+
+            raise ValueError(
+                f"Unsupported JOIN ON construct: "
+                f"{type(condition_expr).__name__}: {condition_expr}"
+            )
+        except ValueError:
+            raise
         except Exception as e:
-            self.logger.warning(f"Error converting join condition: {str(e)}")
-            return "True"
+            raise ValueError(
+                f"Unsupported JOIN ON predicate: {condition_expr}"
+            ) from e
 
     def _convert_column_ref(self, col_expr) -> str:
         """Convert column reference to PySpark col() expression."""
@@ -1254,12 +1343,19 @@ class SQLToPySparkConverter:
                 # Handle CAST expressions in join conditions
                 inner = self._convert_column_ref(col_expr.this)
                 to_type = str(col_expr.to).lower()
+                if to_type.startswith("bit"):
+                    return inner
                 # Map SQL types to PySpark types
                 if "int" in to_type:
                     return f"{inner}.cast('int')"
                 elif "decimal" in to_type or "numeric" in to_type:
                     return f"{inner}.cast('decimal(10,2)')"
-                elif "string" in to_type or "varchar" in to_type:
+                elif (
+                    "string" in to_type
+                    or "varchar" in to_type
+                    or to_type in {"text", "char", "nchar", "nvarchar", "bpchar"}
+                    or to_type.startswith("char")
+                ):
                     return f"{inner}.cast('string')"
                 return f"{inner}.cast('{to_type}')"
             else:

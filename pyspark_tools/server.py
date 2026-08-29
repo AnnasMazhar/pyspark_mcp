@@ -65,6 +65,18 @@ def _convert_sql_to_pyspark_internal(
 
         result = converter.convert_sql_to_pyspark(sql_query, table_info, dialect)
 
+        if not result.success:
+            return {
+                "status": "error",
+                "message": "; ".join(result.warnings)
+                or "SQL conversion failed",
+                "sql_query": sql_query,
+                "dialect": dialect,
+                "warnings": result.warnings,
+                "fallback_used": result.fallback_used,
+                "dialect_used": result.dialect_used,
+            }
+
         if store_result:
             memory.store_conversion(
                 sql_query=sql_query,
