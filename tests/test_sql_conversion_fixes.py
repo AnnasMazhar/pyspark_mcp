@@ -204,9 +204,9 @@ class TestSQLConversionFixes:
         code = result["pyspark_code"]
 
         # The alias 'total' should be resolved to the actual expression
-        assert "sum(col('amount'))" in code
+        assert "spark_sum(col('amount'))" in code
         # Should appear twice - once for 'total' and once for 'percentage'
-        assert code.count("sum(col('amount'))") >= 2
+        assert code.count("spark_sum(col('amount'))") >= 2
         # Should not have col('total')
         assert "col('total')" not in code
 

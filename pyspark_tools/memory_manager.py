@@ -364,13 +364,19 @@ class MemoryManager:
         sql: str,
         dialect: Optional[str] = None,
         table_info: Optional[Dict[str, Any]] = None,
+        style: str = "production",
+        target: str = "spark",
     ) -> str:
-        """Hash SQL together with dialect and table_info so caches never cross dialects."""
+        """Hash SQL together with dialect, style, target, and table_info."""
         dialect_key = (dialect or "spark").strip().lower()
+        style_key = (style or "production").strip().lower()
+        target_key = (target or "spark").strip().lower()
         table_key = ""
         if table_info:
             table_key = json.dumps(table_info, sort_keys=True, default=str)
-        payload = f"{sql.strip().lower()}|{dialect_key}|{table_key}"
+        payload = (
+            f"{sql.strip().lower()}|{dialect_key}|{table_key}|{style_key}|{target_key}"
+        )
         return hashlib.md5(payload.encode()).hexdigest()
 
     def store_conversion(
@@ -381,9 +387,17 @@ class MemoryManager:
         review_notes: str = "",
         dialect: str = "spark",
         table_info: Optional[Dict[str, Any]] = None,
+        style: str = "production",
+        target: str = "spark",
     ) -> str:
         """Store a SQL to PySpark conversion."""
-        sql_hash = self._hash_sql(sql_query, dialect=dialect, table_info=table_info)
+        sql_hash = self._hash_sql(
+            sql_query,
+            dialect=dialect,
+            table_info=table_info,
+            style=style,
+            target=target,
+        )
 
         conn = self._create_connection("Store conversion")
         try:
@@ -413,9 +427,17 @@ class MemoryManager:
         sql_query: str,
         dialect: Optional[str] = None,
         table_info: Optional[Dict[str, Any]] = None,
+        style: str = "production",
+        target: str = "spark",
     ) -> Optional[Dict[str, Any]]:
-        """Retrieve a stored conversion by SQL query, dialect, and table_info."""
-        sql_hash = self._hash_sql(sql_query, dialect=dialect, table_info=table_info)
+        """Retrieve a stored conversion by SQL query, dialect, style, and target."""
+        sql_hash = self._hash_sql(
+            sql_query,
+            dialect=dialect,
+            table_info=table_info,
+            style=style,
+            target=target,
+        )
 
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row

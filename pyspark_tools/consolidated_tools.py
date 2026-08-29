@@ -43,6 +43,8 @@ def convert(
     dialect: Optional[str] = None,
     optimization_level: str = "standard",
     include_glue_template: bool = False,
+    style: str = "production",
+    target: str = "spark",
     # --- mode='batch_files' parameters ---
     file_paths: Optional[List[str]] = None,
     output_dir: Optional[str] = None,
@@ -61,7 +63,8 @@ def convert(
     ``sql``
         Convert a single SQL query to PySpark code.
         *Parameters:* ``sql_query`` (required), ``table_info``, ``dialect``,
-        ``optimization_level``, ``include_glue_template``
+        ``optimization_level``, ``include_glue_template``, ``style``
+        (``production`` | ``notebook``), ``target`` (``spark`` | ``glue``)
 
     ``batch_files``
         Process multiple SQL files into PySpark.
@@ -95,6 +98,8 @@ def convert(
             sql_query=sql_query,
             table_info=table_info,
             dialect=dialect,
+            style=style,
+            target=target,
         )
 
     elif mode == "batch_files":

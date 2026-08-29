@@ -13,7 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conversion cache keys include dialect (and table_info) so postgres/spark
   requests never share an entry.
 - Default Glue job version is 5.0; `job.commit()` runs on success only.
-- Converter default emit is production-shaped (no `import *`, no `show()`).
+- Converter default emit is production-shaped (no `import *`, no `show()`,
+  `sum as spark_sum`). `target="glue"` omits `SparkSession.builder`.
+- Golden SQL corpus under `tests/corpus/` (syntax gate; optional `[spark]`
+  round-trip). `examples/` holds demo SQL + captured output.
 
 ### Fixed
 - FROM-less SQL (`SELECT 1`) now emits `spark.sql(...)` that `ast.parse`s.
