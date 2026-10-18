@@ -135,6 +135,7 @@ data/
 datasets/
 *.csv
 *.json
+!server.json
 !tests/corpus/*.json
 !tests/corpus/**/*.json
 *.xml
