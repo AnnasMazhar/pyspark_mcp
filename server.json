@@ -1,0 +1,23 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.AnnasMazhar/pyspark-mcp",
+  "description": "SQL migration, AWS Glue job generation, and PySpark optimization as an MCP server.",
+  "title": "PySpark MCP",
+  "repository": {
+    "url": "https://github.com/AnnasMazhar/pyspark_mcp",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "pyspark-tools",
+      "version": "0.1.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
